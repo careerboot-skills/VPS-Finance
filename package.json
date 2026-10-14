@@ -1,1 +1,16 @@
-
+{
+  "name": "vps-finance-portal",
+  "version": "1.0.0",
+  "description": "Loan distribution & customer registration portal for VPS Finance with ₹350 file charge and MongoDB",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mongoose": "^8.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
