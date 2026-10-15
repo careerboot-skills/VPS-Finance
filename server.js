@@ -5,17 +5,24 @@
 
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/vps_finance';
 
-// Middleware
+// Middleware & Manual CORS Support (No external module needed)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
 
 // ==========================================
 // MONGODB SCHEMAS & MODELS
@@ -39,8 +46,8 @@ const Loan = mongoose.model('Loan', loanSchema);
 
 // Connect to MongoDB
 mongoose.connect(MONGO_URI)
-    .then(() => console.log(' Connected to MongoDB Atlas'))
-    .catch(err => console.error(' MongoDB connection error:', err));
+    .then(() => console.log('Connected to MongoDB Atlas successfully'))
+    .catch(err => console.error('MongoDB connection error:', err));
 
 
 // ==========================================
@@ -110,7 +117,7 @@ app.get('/api/admin/loans', async (req, res) => {
 // 5. Admin: Confirm or Reject Loan & Set Confirmed Amount
 app.post('/api/admin/loans/:id/action', async (req, res) => {
     try {
-        const { action, confirmedAmount } = req.body; // action: 'Confirm' or 'Reject'
+        const { action, confirmedAmount } = req.body;
         const loan = await Loan.findById(req.params.id);
         if (!loan) return res.status(404).json({ success: false, error: 'Loan not found' });
 
@@ -354,7 +361,6 @@ app.get('*', (req, res) => {
             });
             document.getElementById('tab-' + tabId).classList.remove('hidden');
 
-            // Nav active state highlights
             ['nav-apply', 'nav-status', 'nav-admin'].forEach(id => {
                 const el = document.getElementById(id);
                 if(el) el.classList.remove('bg-blue-600', 'text-white');
