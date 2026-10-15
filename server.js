@@ -5,13 +5,12 @@
 
 const express = require('express');
 const mongoose = require('mongoose');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/vps_finance';
 
-// Middleware & Manual CORS Support (No external module needed)
+// Middleware & Manual CORS Support
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
@@ -33,7 +32,7 @@ const loanSchema = new mongoose.Schema({
     address: { type: String, required: true },
     loanAmount: { type: Number, required: true },
     confirmedAmount: { type: Number, default: 0 },
-    interestRate: { type: Number, required: true }, // percentage
+    interestRate: { type: Number, required: true },
     returnDate: { type: String, required: true },
     upiId: { type: String, required: true },
     fileChargePaid: { type: Boolean, default: false },
