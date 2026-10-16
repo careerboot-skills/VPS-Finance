@@ -9,6 +9,7 @@
  * - Drawable Signature Pads for both Client and Financer.
  * - Financer Portal unlocked via passcode 'Paisa25' with custom approved amount entry & signature drawing.
  * - Real-time status tracker for clients with official Agreement PDF download.
+ * - Perpetual Loan Ledger & Financial Aggregates (Total Amount Given vs Got) for both Client and Financer.
  * - Next-gen 4D animated mesh/particle background & dark glassmorphism Tailwind UI.
  */
 
@@ -315,54 +316,51 @@ app.get('/dashboard', async (req, res) => {
     if (!req.session.clientMobile) return res.redirect('/');
 
     const user = await User.findOne({ mobile: req.session.clientMobile });
-    const existingLoan = await Loan.findOne({ clientMobile: req.session.clientMobile }).sort({ createdAt: -1 });
-
-    const loanActiveOrPending = existingLoan && ['Pending', 'Approved', 'Ongoing'].includes(existingLoan.status);
+    const userLoans = await Loan.find({ clientMobile: req.session.clientMobile }).sort({ createdAt: -1 });
+    const activeLoan = userLoans.find(l => ['Pending', 'Approved', 'Ongoing'].includes(l.status));
 
     let loanStatusHtml = '';
-    if (!existingLoan) {
-        loanStatusHtml = `<p class="text-slate-400 text-sm">You have no active or past loan applications.</p>`;
+    if (!activeLoan) {
+        loanStatusHtml = `<p class="text-slate-400 text-sm">You have no active or pending loan applications right now.</p>`;
     } else {
-        const badgeColor = ['Approved', 'Ongoing'].includes(existingLoan.status) ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
-                           existingLoan.status === 'Rejected' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
-                           'bg-amber-500/20 text-amber-400 border-amber-500/30';
+        const badgeColor = ['Approved', 'Ongoing'].includes(activeLoan.status) ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30';
         
         loanStatusHtml = `
         <div class="space-y-4">
             <div class="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-4">
                     <div>
-                        <h3 class="text-lg font-bold text-white">Loan Application Status</h3>
-                        <p class="text-xs text-slate-400">Submitted on ${new Date(existingLoan.createdAt).toLocaleDateString()}</p>
+                        <h3 class="text-lg font-bold text-white">Active Loan Tracker</h3>
+                        <p class="text-xs text-slate-400">Submitted on ${new Date(activeLoan.createdAt).toLocaleDateString()}</p>
                     </div>
                     <div>
-                        <span class="px-4 py-1.5 rounded-full text-xs font-bold border ${badgeColor}">${existingLoan.status}</span>
+                        <span class="px-4 py-1.5 rounded-full text-xs font-bold border ${badgeColor}">${activeLoan.status}</span>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <div><span class="text-slate-500 block text-xs">Full Name</span> <strong class="text-white">${existingLoan.clientName}</strong></div>
-                    <div><span class="text-slate-500 block text-xs">Address</span> <strong class="text-white">${existingLoan.address}</strong></div>
-                    <div><span class="text-slate-500 block text-xs">Requested Amount</span> <strong class="text-emerald-400">₹${existingLoan.requestAmount.toLocaleString()}</strong></div>
-                    ${existingLoan.approvedAmount ? `<div><span class="text-slate-500 block text-xs">Approved Amount</span> <strong class="text-cyan-400">₹${existingLoan.approvedAmount.toLocaleString()}</strong></div>` : ''}
-                    <div><span class="text-slate-500 block text-xs">Guarantor Mobile</span> <strong class="text-white">+91 ${existingLoan.guarantorMobile}</strong></div>
-                    <div><span class="text-slate-500 block text-xs">Return Date</span> <strong class="text-white">${existingLoan.returnDate}</strong></div>
+                    <div><span class="text-slate-500 block text-xs">Full Name</span> <strong class="text-white">${activeLoan.clientName}</strong></div>
+                    <div><span class="text-slate-500 block text-xs">Address</span> <strong class="text-white">${activeLoan.address}</strong></div>
+                    <div><span class="text-slate-500 block text-xs">Requested Amount</span> <strong class="text-emerald-400">₹${activeLoan.requestAmount.toLocaleString()}</strong></div>
+                    ${activeLoan.approvedAmount ? `<div><span class="text-slate-500 block text-xs">Approved Sanction</span> <strong class="text-cyan-400">₹${activeLoan.approvedAmount.toLocaleString()}</strong></div>` : ''}
+                    <div><span class="text-slate-500 block text-xs">Guarantor Mobile</span> <strong class="text-white">+91 ${activeLoan.guarantorMobile}</strong></div>
+                    <div><span class="text-slate-500 block text-xs">Target Return Date</span> <strong class="text-white">${activeLoan.returnDate}</strong></div>
                 </div>
 
                 <div class="flex space-x-4 pt-2">
-                    <a href="/uploads/${existingLoan.aadharPdfPath}" target="_blank" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 border border-slate-700 flex items-center space-x-2">
+                    <a href="/uploads/${activeLoan.aadharPdfPath}" target="_blank" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 border border-slate-700 flex items-center space-x-2">
                         <i class="fa-solid fa-file-lines text-emerald-400"></i>
-                        <span>View Aadhar Document</span>
+                        <span>View Aadhar PDF</span>
                     </a>
-                    <a href="/uploads/${existingLoan.panPdfPath}" target="_blank" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 border border-slate-700 flex items-center space-x-2">
+                    <a href="/uploads/${activeLoan.panPdfPath}" target="_blank" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 border border-slate-700 flex items-center space-x-2">
                         <i class="fa-solid fa-file-lines text-emerald-400"></i>
-                        <span>View PAN Document</span>
+                        <span>View PAN PDF</span>
                     </a>
                 </div>
             </div>
 
-            ${['Approved', 'Ongoing', 'Completed'].includes(existingLoan.status) ? `
-                <a href="/download-agreement/${existingLoan._id}" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 font-bold flex items-center justify-center space-x-2 glow-button">
+            ${['Approved', 'Ongoing', 'Completed'].includes(activeLoan.status) ? `
+                <a href="/download-agreement/${activeLoan._id}" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 font-bold flex items-center justify-center space-x-2 glow-button">
                     <i class="fa-solid fa-file-pdf"></i>
                     <span>Download Official Loan Agreement PDF</span>
                 </a>
@@ -371,13 +369,34 @@ app.get('/dashboard', async (req, res) => {
         `;
     }
 
+    // Perpetual History Rows for Client
+    let historyRowsHtml = userLoans.map(loan => {
+        const badgeColor = ['Approved', 'Ongoing'].includes(loan.status) ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+                           loan.status === 'Rejected' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
+                           loan.status === 'Completed' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                           'bg-amber-500/20 text-amber-400 border-amber-500/30';
+        return `
+        <tr class="border-b border-slate-800/60 hover:bg-slate-900/40 transition">
+            <td class="p-4 text-xs text-slate-300">${new Date(loan.createdAt).toLocaleDateString()}</td>
+            <td class="p-4 font-bold text-emerald-400">₹${loan.requestAmount.toLocaleString()}</td>
+            <td class="p-4 font-bold text-cyan-400">${loan.approvedAmount ? '₹' + loan.approvedAmount.toLocaleString() : 'N/A'}</td>
+            <td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-bold border ${badgeColor}">${loan.status}</span></td>
+            <td class="p-4 text-right">
+                ${['Approved', 'Ongoing', 'Completed'].includes(loan.status) ? `
+                    <a href="/download-agreement/${loan._id}" class="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold"><i class="fa-solid fa-file-pdf"></i> PDF</a>
+                ` : '<span class="text-xs text-slate-500">Not Available</span>'}
+            </td>
+        </tr>
+        `;
+    }).join('');
+
     let formHtml = '';
-    if (loanActiveOrPending) {
+    if (activeLoan) {
         formHtml = `
         <div class="p-6 rounded-2xl glass-panel border border-amber-500/20 text-center space-y-3">
             <div class="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400 font-bold text-lg">!</div>
-            <h3 class="text-lg font-bold text-white">Active Loan Notice</h3>
-            <p class="text-sm text-slate-400">No new loan eligibility while an active, ongoing, or pending loan exists on this account.</p>
+            <h3 class="text-lg font-bold text-white">Active Loan Restriction Notice</h3>
+            <p class="text-sm text-slate-400">You currently have an active, ongoing, or pending loan. New loan applications are locked until your current loan is fully completed.</p>
         </div>
         `;
     } else {
@@ -502,14 +521,37 @@ app.get('/dashboard', async (req, res) => {
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div class="lg:col-span-1 glass-panel p-6 rounded-3xl space-y-4">
-                <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Application Status</h3>
-                ${loanStatusHtml}
+            <div class="lg:col-span-1 space-y-6">
+                <div class="glass-panel p-6 rounded-3xl space-y-4">
+                    <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Current Status</h3>
+                    ${loanStatusHtml}
+                </div>
             </div>
 
             <div class="lg:col-span-2 glass-panel p-6 sm:p-8 rounded-3xl space-y-6">
-                <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">New Micro-Loan Request</h3>
+                <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Request New Micro-Loan</h3>
                 ${formHtml}
+            </div>
+        </div>
+
+        <!-- Perpetual Client Loan Ledger -->
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl space-y-4">
+            <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Your Complete Loan History (Perpetual Ledger)</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-800 bg-slate-900/80 text-xs text-slate-400 uppercase tracking-wider">
+                            <th class="py-3 px-4">Date</th>
+                            <th class="py-3 px-4">Requested</th>
+                            <th class="py-3 px-4">Approved</th>
+                            <th class="py-3 px-4">Status</th>
+                            <th class="py-3 px-4 text-right">Agreement PDF</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800 text-sm">
+                        ${historyRowsHtml.length > 0 ? historyRowsHtml : `<tr><td colspan="5" class="text-center py-6 text-slate-500 text-sm">No past loan records found.</td></tr>`}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -588,6 +630,20 @@ app.get('/financer-dashboard', async (req, res) => {
 
     const loans = await Loan.find({}).sort({ createdAt: -1 });
 
+    // Calculate Financial Aggregates for Financer
+    // Total Amount Given = Sum of approvedAmount for approved, ongoing, and completed loans
+    // Total Amount Got = Sum of approvedAmount for completed loans (loan recovery inflows)
+    let totalGiven = 0;
+    let totalGot = 0;
+    loans.forEach(loan => {
+        if (['Approved', 'Ongoing', 'Completed'].includes(loan.status)) {
+            totalGiven += (loan.approvedAmount || loan.requestAmount);
+        }
+        if (loan.status === 'Completed') {
+            totalGot += (loan.approvedAmount || loan.requestAmount);
+        }
+    });
+
     let rowsHtml = loans.map(loan => {
         const badgeColor = ['Approved', 'Ongoing'].includes(loan.status) ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
                            loan.status === 'Rejected' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' :
@@ -602,7 +658,7 @@ app.get('/financer-dashboard', async (req, res) => {
             </td>
             <td class="p-4">
                 <div class="font-black text-emerald-400">₹${loan.requestAmount.toLocaleString()}</div>
-                ${loan.approvedAmount ? `<div class="text-xs text-cyan-400 font-semibold">Appr: ₹${loan.approvedAmount.toLocaleString()}</div>` : ''}
+                ${loan.approvedAmount ? `<div class="text-xs text-cyan-400 font-semibold">Sanction: ₹${loan.approvedAmount.toLocaleString()}</div>` : ''}
                 <div class="text-xs text-slate-400">Return: ${loan.returnDate}</div>
             </td>
             <td class="p-4 text-xs text-slate-300 max-w-xs">
@@ -626,7 +682,9 @@ app.get('/financer-dashboard', async (req, res) => {
                 ${['Approved', 'Ongoing', 'Completed'].includes(loan.status) ? `
                     <a href="/download-agreement/${loan._id}" class="inline-block px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold"><i class="fa-solid fa-file-pdf"></i> PDF</a>
                 ` : ''}
-                <form action="/complete-loan/${loan._id}" method="POST" class="inline"><button class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold">Complete</button></form>
+                ${['Approved', 'Ongoing'].includes(loan.status) ? `
+                    <form action="/complete-loan/${loan._id}" method="POST" class="inline"><button class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold">Mark Recovered/Completed</button></form>
+                ` : ''}
             </td>
         </tr>
         `;
@@ -634,15 +692,42 @@ app.get('/financer-dashboard', async (req, res) => {
 
     const content = `
     <div class="w-full space-y-6">
-        <div class="glass-panel p-6 sm:p-8 rounded-3xl flex items-center justify-between">
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
                 <span class="text-xs uppercase tracking-widest text-purple-400 font-semibold">Financer Control Center</span>
-                <h2 class="text-2xl font-bold text-white mt-1">All Client Loan Applications</h2>
+                <h2 class="text-2xl font-bold text-white mt-1">Perpetual Master Loan Ledger & Portfolio</h2>
             </div>
             <a href="/financer-logout" class="px-4 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold hover:bg-rose-500/25 transition">Lock Portal</a>
         </div>
 
+        <!-- Financial Summary Cards (Total Given vs Got) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="glass-panel p-6 rounded-3xl border border-emerald-500/30 flex items-center justify-between">
+                <div>
+                    <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Total Amount Given (Sanctioned)</span>
+                    <h3 class="text-3xl font-black text-emerald-400 mt-1">₹${totalGiven.toLocaleString()}</h3>
+                </div>
+                <div class="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-2xl">
+                    <i class="fa-solid fa-arrow-up-right-dots"></i>
+                </div>
+            </div>
+
+            <div class="glass-panel p-6 rounded-3xl border border-cyan-500/30 flex items-center justify-between">
+                <div>
+                    <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Total Amount Got (Recovered)</span>
+                    <h3 class="text-3xl font-black text-cyan-400 mt-1">₹${totalGot.toLocaleString()}</h3>
+                </div>
+                <div class="w-14 h-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-2xl">
+                    <i class="fa-solid fa-arrow-down-wide-short"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Master Loan Ledger Table -->
         <div class="glass-panel rounded-3xl overflow-hidden shadow-xl border border-slate-700">
+            <div class="p-6 border-b border-slate-800 bg-slate-900/50">
+                <h3 class="text-lg font-bold text-white">All Client Loan Records (Permanent History)</h3>
+            </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
