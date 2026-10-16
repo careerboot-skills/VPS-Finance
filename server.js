@@ -1,564 +1,511 @@
-/*******************************************************************************
- * VPS FINANCE - Loan Management & Agreement Generation System
- * Single-file Express.js & MongoDB Application
- *******************************************************************************/
+/**
+ * LeLe Finance - Powered by CareerBoot
+ * Single-file Express Application for Loan Management & Agreement Generation
+ */
 
 const express = require('express');
 const mongoose = require('mongoose');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const PDFDocument = require('pdfkit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/vps_finance';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/lele-finance';
 
-// Middleware & Manual CORS Support
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
+// ==================== DATABASE CONNECTION ====================
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('Connected to MongoDB Atlas successfully.'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// ==================== SCHEMAS & MODELS ====================
+const userSchema = new mongoose.Schema({
+  mobile: { type: String, required: true, unique: true },
+  name: { type: String, default: '' },
+  address: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
 });
 
-// ==========================================
-// MONGODB SCHEMAS & MODELS
-// ==========================================
 const loanSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    mobNo: { type: String, required: true },
-    address: { type: String, required: true },
-    loanAmount: { type: Number, required: true },
-    confirmedAmount: { type: Number, default: 0 },
-    interestRate: { type: Number, required: true },
-    returnDate: { type: String, required: true },
-    upiId: { type: String, required: true },
-    fileChargePaid: { type: Boolean, default: false },
-    fileChargeTxnId: { type: String, default: '' },
-    status: { type: String, enum: ['Pending Payment', 'Pending Admin Confirmation', 'Confirmed', 'Rejected'], default: 'Pending Payment' },
-    createdAt: { type: Date, default: Date.now }
+  clientMobile: { type: String, required: true },
+  clientName: { type: String, required: true },
+  address: { type: String, required: true },
+  aadharFileName: { type: String, required: true },
+  panFileName: { type: String, required: true },
+  guarantorMobile: { type: String, required: true },
+  requestAmount: { type: Number, required: true },
+  returnDate: { type: String, required: true },
+  signature: { type: String, required: true },
+  status: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+  createdAt: { type: Date, default: Date.now }
 });
 
+const User = mongoose.model('User', userSchema);
 const Loan = mongoose.model('Loan', loanSchema);
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('Connected to MongoDB Atlas successfully'))
-    .catch(err => console.error('MongoDB connection error:', err));
+// ==================== MIDDLEWARE ====================
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
+app.use(session({
+  secret: 'lele-finance-careerboot-super-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({ mongoUrl: MONGO_URI }),
+  cookie: { maxAge: 1000 * 60 * 60 * 24 } // 1 day session
+}));
 
-// ==========================================
-// API ROUTES
-// ==========================================
-
-// 1. Submit New Loan Request (Initial Step)
-app.post('/api/loans', async (req, res) => {
-    try {
-        const { name, mobNo, address, loanAmount, interestRate, returnDate, upiId } = req.body;
-        const newLoan = new Loan({
-            name,
-            mobNo,
-            address,
-            loanAmount,
-            interestRate,
-            returnDate,
-            upiId,
-            status: 'Pending Payment'
-        });
-        await newLoan.save();
-        res.status(201).json({ success: true, loanId: newLoan._id });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 2. Submit File Charge Payment Proof (₹350)
-app.post('/api/loans/:id/pay', async (req, res) => {
-    try {
-        const { txnId } = req.body;
-        const loan = await Loan.findById(req.params.id);
-        if (!loan) return res.status(404).json({ success: false, error: 'Loan request not found' });
-
-        loan.fileChargePaid = true;
-        loan.fileChargeTxnId = txnId || 'UPI-DIRECT-PAY';
-        loan.status = 'Pending Admin Confirmation';
-        await loan.save();
-
-        res.json({ success: true, message: 'Payment submitted successfully. Waiting for Admin confirmation.' });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 3. Get Loan Status (Customer View)
-app.get('/api/loans/:id', async (req, res) => {
-    try {
-        const loan = await Loan.findById(req.params.id);
-        if (!loan) return res.status(404).json({ success: false, error: 'Loan not found' });
-        res.json({ success: true, loan });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 4. Admin: Get All Loans
-app.get('/api/admin/loans', async (req, res) => {
-    try {
-        const loans = await Loan.find().sort({ createdAt: -1 });
-        res.json({ success: true, loans });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-// 5. Admin: Confirm or Reject Loan & Set Confirmed Amount
-app.post('/api/admin/loans/:id/action', async (req, res) => {
-    try {
-        const { action, confirmedAmount } = req.body;
-        const loan = await Loan.findById(req.params.id);
-        if (!loan) return res.status(404).json({ success: false, error: 'Loan not found' });
-
-        if (action === 'Confirm') {
-            loan.status = 'Confirmed';
-            loan.confirmedAmount = confirmedAmount || loan.loanAmount;
-        } else if (action === 'Reject') {
-            loan.status = 'Rejected';
-        }
-        await loan.save();
-        res.json({ success: true, loan });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
-
-
-// ==========================================
-// FRONTEND INTERFACE (HTML / CSS / JS)
-// ==========================================
-app.get('*', (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html lang="en">
+// ==================== UI TEMPLATE HELPER ====================
+function renderLayout(title, content) {
+  return `<!DOCTYPE html>
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VPS Finance - Loan Distribution Portal</title>
+    <title>${title} | LeLe Finance</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              glassDark: 'rgba(17, 24, 39, 0.7)',
+              glassBorder: 'rgba(255, 255, 255, 0.1)',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      .glass {
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .glass-input {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .glass-input:focus {
+        border-color: #38bdf8;
+        outline: none;
+        box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+      }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between font-sans">
-
-    <!-- Navbar -->
-    <header class="bg-slate-800 border-b border-slate-700 shadow-md">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-            <div class="flex items-center space-x-3 cursor-pointer" onclick="switchTab('apply')">
-                <div class="bg-blue-600 text-white p-2 rounded-lg font-bold text-xl"><i class="fa-solid fa-vault"></i></div>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-cyan-500 selection:text-white">
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <a href="/" class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-xl shadow-lg shadow-cyan-500/30">LF</div>
                 <div>
-                    <h1 class="text-xl font-bold tracking-wide text-blue-400">VPS FINANCE</h1>
-                    <p class="text-xs text-slate-400">Secure Loan Distribution & Agreements</p>
+                    <h1 class="text-xl font-bold tracking-wider bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">LeLe Finance</h1>
+                    <p class="text-xs text-slate-400 tracking-widest uppercase">Powered by CareerBoot</p>
                 </div>
+            </a>
+            <div class="flex items-center space-x-4">
+                <a href="/financer-login" class="text-xs font-medium uppercase tracking-wider px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 transition shadow-sm">Financer Portal</a>
             </div>
-            <nav class="space-x-4">
-                <button onclick="switchTab('apply')" id="nav-apply" class="px-3 py-2 rounded-md bg-blue-600 text-white font-medium text-sm transition">Apply Loan</button>
-                <button onclick="switchTab('status')" id="nav-status" class="px-3 py-2 rounded-md hover:bg-slate-700 font-medium text-sm transition">Check Status</button>
-                <button onclick="switchTab('admin')" id="nav-admin" class="px-3 py-2 rounded-md hover:bg-slate-700 font-medium text-sm transition text-amber-400"><i class="fa-solid fa-lock mr-1"></i> Admin Portal</button>
-            </nav>
         </div>
     </header>
 
-    <!-- Main Container -->
-    <main class="max-w-4xl w-full mx-auto px-4 py-8 flex-grow">
-
-        <!-- TAB 1: APPLY LOAN -->
-        <section id="tab-apply" class="space-y-6">
-            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl">
-                <h2 class="text-2xl font-bold mb-2 text-blue-400"><i class="fa-solid fa-file-invoice-dollar mr-2"></i>Loan Application & Registration</h2>
-                <p class="text-sm text-slate-400 mb-6">Fill in your details below. A one-time non-refundable file charge of <strong class="text-white">₹350/-</strong> is required to process your application.</p>
-                
-                <form id="loanForm" onsubmit="handleLoanSubmit(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Full Name</label>
-                        <input type="text" id="name" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Enter your full name">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Mobile Number</label>
-                        <input type="tel" id="mobNo" required pattern="[0-9]{10}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="10-digit mobile number">
-                    </div>
-                    <div class="md:col-span-2">
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Complete Address</label>
-                        <textarea id="address" rows="2" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="House No, Street, City, State, Pincode"></textarea>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Requested Loan Amount (₹)</label>
-                        <input type="number" id="loanAmount" required min="1000" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="e.g. 50000">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Interest Rate (% p.a.)</label>
-                        <input type="number" step="0.1" id="interestRate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="e.g. 12">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Return Date</label>
-                        <input type="date" id="returnDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Your UPI ID (For Disbursement)</label>
-                        <input type="text" id="upiId" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="username@oksbi / paytm">
-                    </div>
-                    <div class="md:col-span-2 mt-4">
-                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg transition flex items-center justify-center space-x-2">
-                            <span>Proceed for Loan & File Charge Payment</span>
-                            <i class="fa-solid fa-arrow-right"></i>
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </section>
-
-        <!-- TAB 1.5: PAYMENT MODAL / SECTION -->
-        <section id="tab-payment" class="hidden space-y-6">
-            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl text-center max-w-xl mx-auto">
-                <div class="bg-blue-600/20 text-blue-400 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
-                    <i class="fa-solid fa-indian-rupee-sign"></i>
-                </div>
-                <h2 class="text-2xl font-bold mb-2">Pay File Charge (₹350/-)</h2>
-                <p class="text-sm text-slate-400 mb-6">Scan the QR code below using any UPI app (GPay, PhonePe, Paytm) and enter transaction reference ID once paid.</p>
-                
-                <div class="bg-white p-4 rounded-xl inline-block mb-4 shadow">
-                    <!-- UPI QR Code set to 9005041462@upi -->
-                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa=9005041462@upi&pn=VPS%20Finance&am=350.00&cu=INR" alt="UPI QR Code" class="mx-auto rounded">
-                    <p class="text-xs text-slate-800 font-mono mt-2 font-bold">UPI ID: 9005041462@upi</p>
-                </div>
-
-                <div class="mb-4 text-left">
-                    <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Enter UPI Transaction ID / Reference No.</label>
-                    <input type="text" id="txnId" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="e.g. UPI/234982347923">
-                </div>
-
-                <button onclick="submitPayment()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg shadow-lg transition">
-                    I Have Paid ₹350/- - Submit for Verification
-                </button>
-            </div>
-        </section>
-
-        <!-- TAB 2: CHECK STATUS -->
-        <section id="tab-status" class="hidden space-y-6">
-            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl max-w-xl mx-auto">
-                <h2 class="text-2xl font-bold mb-2 text-blue-400"><i class="fa-solid fa-magnifying-glass mr-2"></i>Check Loan Status</h2>
-                <p class="text-sm text-slate-400 mb-4">Enter your application ID received upon registration.</p>
-                <div class="flex gap-2 mb-6">
-                    <input type="text" id="searchLoanId" placeholder="Enter Application ID (e.g. 64a...)" class="flex-grow bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm">
-                    <button onclick="fetchLoanStatus()" class="bg-blue-600 hover:bg-blue-500 px-6 py-2.5 rounded-lg font-bold transition">Check</button>
-                </div>
-
-                <div id="statusResult" class="hidden bg-slate-900 p-4 rounded-lg border border-slate-700 space-y-3">
-                    <!-- Dynamic status info -->
-                </div>
-            </div>
-        </section>
-
-        <!-- TAB 3: ADMIN PORTAL -->
-        <section id="tab-admin" class="hidden space-y-6">
-            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl">
-                <div class="flex justify-between items-center mb-6">
-                    <div>
-                        <h2 class="text-2xl font-bold text-amber-400"><i class="fa-solid fa-user-shield mr-2"></i>Admin Dashboard</h2>
-                        <p class="text-sm text-slate-400">Review loan requests, confirm amounts, and manage user files.</p>
-                    </div>
-                    <button onclick="loadAdminLoans()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-semibold transition"><i class="fa-solid fa-rotate mr-1"></i> Refresh</button>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse text-sm">
-                        <thead>
-                            <tr class="border-b border-slate-700 text-slate-400 uppercase text-xs">
-                                <th class="p-3">Customer</th>
-                                <th class="p-3">Req. Amt</th>
-                                <th class="p-3">File Fee</th>
-                                <th class="p-3">Status</th>
-                                <th class="p-3 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="adminLoanTableBody" class="divide-y divide-slate-700">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
-
-        <!-- AGREEMENT VIEW MODAL -->
-        <section id="tab-agreement" class="hidden space-y-6">
-            <div class="bg-white text-slate-900 p-8 rounded-xl shadow-2xl max-w-3xl mx-auto print:shadow-none print:p-0">
-                <div class="flex justify-between items-start border-b pb-4 mb-4">
-                    <div>
-                        <h1 class="text-2xl font-black text-blue-900">VPS FINANCE</h1>
-                        <p class="text-xs text-slate-600">Authorized Loan Distribution & Agreement Portal</p>
-                    </div>
-                    <div class="text-right">
-                        <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full uppercase">Loan Agreement</span>
-                        <p class="text-xs text-slate-500 mt-1" id="ag-date">Date: Oct 15, 2026</p>
-                    </div>
-                </div>
-
-                <div class="space-y-4 text-sm leading-relaxed">
-                    <p class="font-bold">LOAN AGREEMENT & PROMISSORY NOTE</p>
-                    <p>This Loan Agreement ("Agreement") is entered into by and between <strong>VPS Finance</strong> ("Lender") and the borrower detailed below ("Borrower").</p>
-                    
-                    <div class="bg-slate-100 p-4 rounded-lg grid grid-cols-2 gap-2 text-xs">
-                        <div><strong>Borrower Name:</strong> <span id="ag-name"></span></div>
-                        <div><strong>Mobile No:</strong> <span id="ag-mob"></span></div>
-                        <div class="col-span-2"><strong>Address:</strong> <span id="ag-address"></span></div>
-                        <div><strong>Confirmed Loan Amount:</strong> ₹<span id="ag-amount" class="text-blue-700 font-bold text-base"></span></div>
-                        <div><strong>Interest Rate:</strong> <span id="ag-interest"></span>% p.a.</div>
-                        <div><strong>Repayment Date:</strong> <span id="ag-return"></span></div>
-                        <div><strong>Disbursement UPI ID:</strong> <span id="ag-upi"></span></div>
-                    </div>
-
-                    <p><strong>1. Repayment Terms:</strong> The Borrower promises to pay back the Confirmed Loan Amount along with accrued interest to VPS Finance on or before the Return Date specified above.</p>
-                    <p><strong>2. Default & Penalties:</strong> Failure to repay on the due date will attract legal action under applicable financial regulations and recovery proceedings.</p>
-                    <p><strong>3. Acknowledgement:</strong> The Borrower acknowledges receipt of the loan amount disbursed via UPI to the provided ID and agrees to all terms.</p>
-
-                    <div class="grid grid-cols-2 gap-8 pt-16 mt-8 border-t">
-                        <div class="text-center">
-                            <div class="h-16 border-b border-dashed border-slate-400 mb-2 flex items-end justify-center pb-1">
-                                <span class="text-xs text-slate-400 font-mono">[ Digital / Physical Signature ]</span>
-                            </div>
-                            <p class="font-bold text-xs" id="ag-sig-name">Borrower Signature</p>
-                        </div>
-                        <div class="text-center">
-                            <div class="h-16 border-b border-dashed border-slate-400 mb-2 flex items-end justify-center pb-1">
-                                <span class="text-xs text-blue-600 font-bold">VPS Finance Auth. Signatory</span>
-                            </div>
-                            <p class="font-bold text-xs">For VPS Finance</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mt-8 flex justify-between print:hidden">
-                    <button onclick="switchTab('status')" class="bg-slate-300 hover:bg-slate-400 text-slate-800 px-4 py-2 rounded-lg font-bold text-sm">Back to Status</button>
-                    <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-bold text-sm shadow"><i class="fa-solid fa-print mr-2"></i>Print / Download Agreement</button>
-                </div>
-            </div>
-        </section>
-
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-10 w-full flex-grow">
+        ${content}
     </main>
 
     <!-- Footer -->
-    <footer class="bg-slate-800 border-t border-slate-700 text-center py-4 text-xs text-slate-400 mt-8">
-        &copy; 2026 VPS Finance. All rights reserved. Secure Loan Distribution & Management.
+    <footer class="border-t border-slate-900 py-6 text-center text-xs text-slate-500">
+        &copy; 2026 LeLe Finance &bull; CareerBoot & Skills Development, Lucknow. All rights reserved.
     </footer>
-
-    <!-- JavaScript Application Logic -->
-    <script>
-        let currentLoanId = null;
-
-        function switchTab(tabId) {
-            ['tab-apply', 'tab-payment', 'tab-status', 'tab-admin', 'tab-agreement'].forEach(id => {
-                document.getElementById(id).classList.add('hidden');
-            });
-            document.getElementById('tab-' + tabId).classList.remove('hidden');
-
-            ['nav-apply', 'nav-status', 'nav-admin'].forEach(id => {
-                const el = document.getElementById(id);
-                if(el) el.classList.remove('bg-blue-600', 'text-white');
-            });
-            if(['apply', 'status', 'admin'].includes(tabId)) {
-                const el = document.getElementById('nav-' + tabId);
-                if(el) el.classList.add('bg-blue-600', 'text-white');
-            }
-
-            if(tabId === 'admin') loadAdminLoans();
-        }
-
-        async function handleLoanSubmit(e) {
-            e.preventDefault();
-            const payload = {
-                name: document.getElementById('name').value,
-                mobNo: document.getElementById('mobNo').value,
-                address: document.getElementById('address').value,
-                loanAmount: Number(document.getElementById('loanAmount').value),
-                interestRate: Number(document.getElementById('interestRate').value),
-                returnDate: document.getElementById('returnDate').value,
-                upiId: document.getElementById('upiId').value
-            };
-
-            try {
-                const res = await fetch('/api/loans', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                if (data.success) {
-                    currentLoanId = data.loanId;
-                    switchTab('payment');
-                } else {
-                    alert('Error: ' + data.error);
-                }
-            } catch (err) {
-                alert('Network error while submitting application.');
-            }
-        }
-
-        async function submitPayment() {
-            const txnId = document.getElementById('txnId').value;
-            if(!txnId) {
-                alert('Please enter your UPI transaction reference ID.');
-                return;
-            }
-
-            try {
-                const res = await fetch(\`/api/loans/\${currentLoanId}/pay\`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ txnId })
-                });
-                const data = await res.json();
-                if(data.success) {
-                    alert('File charge submitted successfully! Your Application ID is: ' + currentLoanId);
-                    document.getElementById('searchLoanId').value = currentLoanId;
-                    switchTab('status');
-                    fetchLoanStatus();
-                } else {
-                    alert('Error: ' + data.error);
-                }
-            } catch (err) {
-                alert('Network error submitting payment.');
-            }
-        }
-
-        async function fetchLoanStatus() {
-            const loanId = document.getElementById('searchLoanId').value.trim();
-            if(!loanId) return alert('Please enter a Loan Application ID.');
-
-            try {
-                const res = await fetch(\`/api/loans/\${loanId}\`);
-                const data = await res.json();
-                const resultDiv = document.getElementById('statusResult');
-                resultDiv.classList.remove('hidden');
-
-                if(data.success) {
-                    const l = data.loan;
-                    let statusColor = 'text-amber-400';
-                    if(l.status === 'Confirmed') statusColor = 'text-emerald-400';
-                    if(l.status === 'Rejected') statusColor = 'text-rose-400';
-
-                    resultDiv.innerHTML = \`
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-slate-400 font-mono">ID: \${l._id}</span>
-                            <span class="font-bold \${statusColor}">\${l.status}</span>
-                        </div>
-                        <hr class="border-slate-700">
-                        <div class="grid grid-cols-2 gap-2 text-xs">
-                            <div><strong>Name:</strong> \${l.name}</div>
-                            <div><strong>Mobile:</strong> \${l.mobNo}</div>
-                            <div><strong>Req. Amount:</strong> ₹\${l.loanAmount}</div>
-                            <div><strong>Confirmed Amount:</strong> ₹\${l.confirmedAmount || 'Pending'}</div>
-                            <div><strong>File Fee:</strong> \${l.fileChargePaid ? 'Paid (₹350)' : 'Unpaid'}</div>
-                            <div><strong>Return Date:</strong> \${l.returnDate}</div>
-                        </div>
-                        \${l.status === 'Confirmed' ? \`<button onclick="viewAgreement('\${l._id}')" class="w-full mt-3 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg font-bold text-xs"><i class="fa-solid fa-file-contract mr-1"></i> Download / View Agreement</button>\` : ''}
-                    \`;
-                } else {
-                    resultDiv.innerHTML = \`<p class="text-rose-400 text-xs">Loan not found with ID provided.</p>\`;
-                }
-            } catch (err) {
-                alert('Error fetching loan status.');
-            }
-        }
-
-        async function loadAdminLoans() {
-            try {
-                const res = await fetch('/api/admin/loans');
-                const data = await res.json();
-                if(data.success) {
-                    const tbody = document.getElementById('adminLoanTableBody');
-                    tbody.innerHTML = '';
-                    data.loans.forEach(l => {
-                        tbody.innerHTML += \`
-                            <tr class="hover:bg-slate-750 transition">
-                                <td class="p-3">
-                                    <div class="font-bold">\${l.name}</div>
-                                    <div class="text-xs text-slate-400">\${l.mobNo} | UPI: \${l.upiId}</div>
-                                    <div class="text-[10px] text-slate-500 font-mono">ID: \${l._id}</div>
-                                </td>
-                                <td class="p-3">₹\${l.loanAmount}<br><span class="text-xs text-slate-400">\${l.interestRate}% p.a.</span></td>
-                                <td class="p-3">
-                                    \${l.fileChargePaid ? '<span class="text-emerald-400 text-xs"><i class="fa-solid fa-circle-check"></i> Paid (₹350)</span>' : '<span class="text-amber-400 text-xs">Unpaid</span>'}
-                                </td>
-                                <td class="p-3">
-                                    <span class="px-2 py-1 rounded text-xs font-semibold \${l.status === 'Confirmed' ? 'bg-emerald-500/20 text-emerald-400' : l.status === 'Rejected' ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'}">\${l.status}</span>
-                                </td>
-                                <td class="p-3 text-right space-x-1">
-                                    <div class="inline-flex flex-col gap-1 items-end">
-                                        <div class="flex gap-1">
-                                            <input type="number" id="confAmt-\${l._id}" value="\${l.confirmedAmount || l.loanAmount}" class="w-24 bg-slate-900 border border-slate-700 px-2 py-1 text-xs rounded text-white" placeholder="Conf. Amt">
-                                        </div>
-                                        <div class="flex gap-1">
-                                            <button onclick="adminAction('\${l._id}', 'Confirm')" class="bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 rounded text-xs font-bold text-white">Confirm</button>
-                                            <button onclick="adminAction('\${l._id}', 'Reject')" class="bg-rose-600 hover:bg-rose-500 px-2.5 py-1 rounded text-xs font-bold text-white">Reject</button>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        \`;
-                    });
-                }
-            } catch (err) {
-                console.error('Error loading admin loans:', err);
-            }
-        }
-
-        async function adminAction(loanId, action) {
-            const confirmedAmount = Number(document.getElementById(\`confAmt-\${loanId}\`).value);
-            try {
-                const res = await fetch(\`/api/admin/loans/\${loanId}/action\`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action, confirmedAmount })
-                });
-                const data = await res.json();
-                if(data.success) {
-                    loadAdminLoans();
-                } else {
-                    alert('Error: ' + data.error);
-                }
-            } catch (err) {
-                alert('Error updating loan status.');
-            }
-        }
-
-        async function viewAgreement(loanId) {
-            try {
-                const res = await fetch(\`/api/loans/\${loanId}\`);
-                const data = await res.json();
-                if(data.success) {
-                    const l = data.loan;
-                    document.getElementById('ag-name').innerText = l.name;
-                    document.getElementById('ag-mob').innerText = l.mobNo;
-                    document.getElementById('ag-address').innerText = l.address;
-                    document.getElementById('ag-amount').innerText = l.confirmedAmount || l.loanAmount;
-                    document.getElementById('ag-interest').innerText = l.interestRate;
-                    document.getElementById('ag-return').innerText = l.returnDate;
-                    document.getElementById('ag-upi').innerText = l.upiId;
-                    document.getElementById('ag-sig-name').innerText = l.name + ' (Borrower)';
-                    document.getElementById('ag-date').innerText = 'Date: ' + new Date(l.createdAt).toLocaleDateString();
-                    
-                    switchTab('agreement');
-                }
-            } catch (err) {
-                alert('Error loading agreement details.');
-            }
-        }
-    </script>
 </body>
-</html>
-    `);
+</html>`;
+}
+
+// ==================== ROUTES ====================
+
+// 1. Home / Login & Registration via Mobile
+app.get('/', async (req, res) => {
+  if (req.session.clientMobile) {
+    return res.redirect('/dashboard');
+  }
+
+  const content = `
+    <div class="max-w-md mx-auto glass p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+        <div class="absolute -right-16 -top-16 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="text-center mb-8">
+            <h2 class="text-2xl font-bold text-white mb-2">Welcome Client</h2>
+            <p class="text-sm text-slate-400">Enter your mobile number to sign in or register instantly.</p>
+        </div>
+        <form action="/login" method="POST" class="space-y-6">
+            <div>
+                <label class="block text-xs uppercase tracking-wider text-slate-400 mb-2 font-medium">Mobile Number</label>
+                <input type="tel5" name="mobile" required pattern="[0-9]{10}" placeholder="e.g. 9876543210" class="w-full px-4 py-3 rounded-xl glass-input text-white placeholder-slate-600 transition" />
+                <p class="text-[11px] text-slate-500 mt-1">One mobile number = One unique account.</p>
+            </div>
+            <button type="submit" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-semibold text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:scale-[1.01] transition transform active:scale-[0.99]">
+                Continue to Portal &rarr;
+            </button>
+        </form>
+    </div>
+  `;
+  res.send(renderLayout('Client Access', content));
 });
 
-// Start Server
+app.post('/login', async (req, res) => {
+  const { mobile } = req.body;
+  if (!mobile || mobile.length < 10) return res.redirect('/');
+
+  let user = await User.findOne({ mobile });
+  if (!user) {
+    user = await User.create({ mobile });
+  }
+
+  req.session.clientMobile = mobile;
+  res.redirect('/dashboard');
+});
+
+// 2. Client Dashboard
+app.get('/dashboard', async (req, res) => {
+  if (!req.session.clientMobile) return res.redirect('/');
+
+  const user = await User.findOne({ mobile: req.session.clientMobile });
+  const existingLoan = await Loan.findOne({ clientMobile: req.session.clientMobile }).sort({ createdAt: -1 });
+
+  let loanActiveOrPending = existingLoan && (existingLoan.status === 'Pending' || existingLoan.status === 'Approved');
+
+  let loanStatusHtml = '';
+  if (!existingLoan) {
+    loanStatusHtml = `<p class="text-slate-400 text-sm">You have no active or past loan applications.</p>`;
+  } else {
+    const badgeColor = existingLoan.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                       existingLoan.status === 'Rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/30' :
+                       'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    
+    loanStatusHtml = `
+      <div class="space-y-4">
+        <div class="flex items-center justify-between p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div>
+            <p class="text-xs text-slate-400">Requested Amount</p>
+            <p class="text-lg font-bold text-white">₹${existingLoan.requestAmount}</p>
+          </div>
+          <div>
+            <p class="text-xs text-slate-400">Return Date</p>
+            <p class="text-sm font-semibold text-slate-200">${existingLoan.returnDate}</p>
+          </div>
+          <div>
+            <span class="px-3 py-1 rounded-full text-xs font-bold border ${badgeColor}">${existingLoan.status}</span>
+          </div>
+        </div>
+        ${existingLoan.status === 'Approved' ? `
+          <div class="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between">
+            <div>
+              <p class="font-semibold text-emerald-400 text-sm">Loan Approved!</p>
+              <p class="text-xs text-emerald-300/80">Download your official loan agreement PDF below.</p>
+            </div>
+            <a href="/download-agreement/${existingLoan._id}" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-md">Download PDF Agreement</a>
+          </div>
+        ` : ''}
+        ${existingLoan.status === 'Rejected' ? `
+          <div class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20">
+            <p class="text-xs text-rose-400">Your previous loan application was rejected by the financer. You may submit a new request once your record clears.</p>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  let formHtml = '';
+  if (loanActiveOrPending) {
+    formHtml = `
+      <div class="p-6 rounded-2xl glass border border-amber-500/20 text-center space-y-3">
+        <div class="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400 font-bold text-lg">!</div>
+        <h3 class="text-lg font-bold text-white">Active Loan Notice</h3>
+        <p class="text-sm text-slate-400">No new loan eligibility while a loan is ongoing or pending review.</p>
+      </div>
+    `;
+  } else {
+    formHtml = `
+      <form action="/apply-loan" method="POST" class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Full Name</label>
+            <input type="text" name="clientName" required placeholder="Enter your full name" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Guarantor Mobile Number</label>
+            <input type="tel" name="guarantorMobile" required pattern="[0-9]{10}" placeholder="Guarantor mobile" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Complete Residential Address</label>
+          <textarea name="address" rows="2" required placeholder="House no, Street, City, Pincode" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm"></textarea>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Aadhar PDF Upload (Filename)</label>
+            <input type="text" name="aadharFileName" required placeholder="e.g. aadhar_card.pdf" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">PAN PDF Upload (Filename)</label>
+            <input type="text" name="panFileName" required placeholder="e.g. pan_card.pdf" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Requested Loan Amount (₹)</label>
+            <input type="number" name="requestAmount" min="1000" max="500000" required placeholder="e.g. 25000" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Target Return Date</label>
+            <input type="date" name="returnDate" required class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Digital Signature (Type your Full Name)</label>
+          <input type="text" name="signature" required placeholder="Sign digitally with your name" class="w-full px-4 py-2.5 rounded-xl glass-input text-white text-sm italic font-serif" />
+        </div>
+        <button type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-semibold text-white shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 transition">
+          Submit Loan Request
+        </button>
+      </form>
+    `;
+  }
+
+  const content = `
+    <div class="space-y-8">
+      <div class="glass p-6 rounded-3xl flex items-center justify-between">
+        <div>
+          <span class="text-xs uppercase tracking-widest text-cyan-400 font-semibold">Client Dashboard</span>
+          <h2 class="text-2xl font-bold text-white mt-1">Mobile: ${user.mobile}</h2>
+        </div>
+        <a href="/logout" class="px-4 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold hover:bg-rose-500/20 transition">Logout</a>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="lg:col-span-1 glass p-6 rounded-3xl space-y-4">
+          <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Loan Status</h3>
+          ${loanStatusHtml}
+        </div>
+
+        <div class="lg:col-span-2 glass p-6 rounded-3xl space-y-6">
+          <h3 class="text-lg font-bold text-white border-b border-slate-800 pb-3">Request New Loan</h3>
+          ${formHtml}
+        </div>
+      </div>
+    </div>
+  `;
+  res.send(renderLayout('Dashboard', content));
+});
+
+app.post('/apply-loan', async (req, res) => {
+  if (!req.session.clientMobile) return res.redirect('/');
+
+  const { clientName, address, aadharFileName, panFileName, guarantorMobile, requestAmount, returnDate, signature } = req.body;
+
+  // Check ongoing loan guard
+  const existingLoan = await Loan.findOne({ clientMobile: req.session.clientMobile, status: { $in: ['Pending', 'Approved'] } });
+  if (existingLoan) return res.redirect('/dashboard');
+
+  await Loan.create({
+    clientMobile: req.session.clientMobile,
+    clientName,
+    address,
+    aadharFileName,
+    panFileName,
+    guarantorMobile,
+    requestAmount,
+    returnDate,
+    signature,
+    status: 'Pending'
+  });
+
+  res.redirect('/dashboard');
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
+
+// 3. Financer Portal & Authentication
+app.get('/financer-login', (req, res) => {
+  const content = `
+    <div class="max-w-md mx-auto glass p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+        <div class="text-center mb-8">
+            <h2 class="text-2xl font-bold text-white mb-2">Financer Access</h2>
+            <p class="text-sm text-slate-400">Enter the secret passcode to unlock client loan requests.</p>
+        </div>
+        <form action="/financer-auth" method="POST" class="space-y-6">
+            <div>
+                <label class="block text-xs uppercase tracking-wider text-slate-400 mb-2 font-medium">Passcode</label>
+                <input type="password" name="code" required placeholder="Enter passcode" class="w-full px-4 py-3 rounded-xl glass-input text-white placeholder-slate-600 transition" />
+            </div>
+            <button type="submit" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 font-semibold text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition">
+                Unlock Dashboard &rarr;
+            </button>
+        </form>
+    </div>
+  `;
+  res.send(renderLayout('Financer Login', content));
+});
+
+app.post('/financer-auth', (req, res) => {
+  const { code } = req.body;
+  if (code === 'Paisa25') {
+    req.session.isFinancer = true;
+    return res.redirect('/financer-dashboard');
+  }
+  res.redirect('/financer-login');
+});
+
+app.get('/financer-dashboard', async (req, res) => {
+  if (!req.session.isFinancer) return res.redirect('/financer-login');
+
+  const loans = await Loan.find({}).sort({ createdAt: -1 });
+
+  let rowsHtml = loans.map(loan => {
+    const badgeColor = loan.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                       loan.status === 'Rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/30' :
+                       'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    return `
+      <tr class="border-b border-slate-800/60 hover:bg-slate-900/40 transition">
+        <td class="py-4 px-4">
+          <p class="font-bold text-white">${loan.clientName}</p>
+          <p class="text-xs text-slate-400">M: ${loan.clientMobile}</p>
+          <p class="text-xs text-slate-500">Guarantor: ${loan.guarantorMobile}</p>
+        </td>
+        <td class="py-4 px-4">
+          <p class="text-emerald-400 font-bold text-base">₹${loan.requestAmount}</p>
+          <p class="text-xs text-slate-400">Return: ${loan.returnDate}</p>
+        </td>
+        <td class="py-4 px-4 text-xs text-slate-300">
+          <p>Address: ${loan.address}</p>
+          <p class="text-cyan-400">Aadhar: ${loan.aadharFileName} | PAN: ${loan.panFileName}</p>
+        </td>
+        <td class="py-4 px-4 text-xs font-serif italic text-slate-300">${loan.signature}</td>
+        <td class="py-4 px-4">
+          <span class="px-3 py-1 rounded-full text-xs font-bold border ${badgeColor}">${loan.status}</span>
+        </td>
+        <td class="py-4 px-4 space-y-2">
+          ${loan.status === 'Pending' ? `
+            <div class="flex space-x-2">
+              <form action="/update-loan/${loan._id}/Approved" method="POST"><button class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold">Approve</button></form>
+              <form action="/update-loan/${loan._id}/Rejected" method="POST"><button class="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold">Reject</button></form>
+            </div>
+          ` : ''}
+          ${loan.status === 'Approved' ? `
+            <a href="/download-agreement/${loan._id}" class="inline-block px-3 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-lg text-xs font-bold border border-slate-700">Agreement PDF</a>
+          ` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const content = `
+    <div class="space-y-6">
+      <div class="glass p-6 rounded-3xl flex items-center justify-between">
+        <div>
+          <span class="text-xs uppercase tracking-widest text-emerald-400 font-semibold">Financer Portal</span>
+          <h2 class="text-2xl font-bold text-white mt-1">All Client Loan Applications</h2>
+        </div>
+        <a href="/financer-logout" class="px-4 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold hover:bg-rose-500/25 transition">Lock Financer Portal</a>
+      </div>
+
+      <div class="glass rounded-3xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/80 text-xs text-slate-400 uppercase tracking-wider">
+                <th class="py-4 px-4">Client Details</th>
+                <th class="py-4 px-4">Loan Amount</th>
+                <th class="py-4 px-4">Documents & Address</th>
+                <th class="py-4 px-4">Signature</th>
+                <th class="py-4 px-4">Status</th>
+                <th class="py-4 px-4">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml.length > 0 ? rowsHtml : `<tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">No loan requests found.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  res.send(renderLayout('Financer Dashboard', content));
+});
+
+app.post('/update-loan/:id/:status', async (req, res) => {
+  if (!req.session.isFinancer) return res.redirect('/financer-login');
+  const { id, status } = req.params;
+  if (['Approved', 'Rejected'].includes(status)) {
+    await Loan.findByIdAndUpdate(id, { status });
+  }
+  res.redirect('/financer-dashboard');
+});
+
+app.get('/financer-logout', (req, res) => {
+  req.session.isFinancer = false;
+  res.redirect('/');
+});
+
+// 4. Automated Agreement PDF Generation Route
+app.get('/download-agreement/:id', async (req, res) => {
+  const loan = await Loan.findById(req.params.id);
+  if (!loan || loan.status !== 'Approved') {
+    return res.status(403).send('Unauthorized or loan not approved.');
+  }
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename=Loan_Agreement_${loan.clientName.replace(/\s+/g, '_')}.pdf`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  doc.pipe(res);
+
+  // PDF Styling & Content
+  doc.fontSize(20).fillColor('#0284c7').text('LELE FINANCE', { align: 'center' });
+  doc.fontSize(10).fillColor('#64748b').text('Powered by CareerBoot & Skills Development, Lucknow', { align: 'center' });
+  doc.moveDown(2);
+
+  doc.fontSize(14).fillColor('#0f172a').text('OFFICIAL LOAN AGREEMENT', { align: 'underline' });
+  doc.moveDown(1);
+
+  doc.fontSize(10).fillColor('#334155').text(`This agreement is made and executed on this day between LeLe Finance (Financer) and the Borrower detailed below:` );
+  doc.moveDown(1);
+
+  doc.fontSize(11).fillColor('#0f172a').text('Borrower Details:');
+  doc.fontSize(10).fillColor('#334155')
+     .text(`- Full Name: ${loan.clientName}`)
+     .text(`- Mobile Number: ${loan.clientMobile}`)
+     .text(`- Residential Address: ${loan.address}`)
+     .text(`- Guarantor Mobile: ${loan.guarantorMobile}`);
+  doc.moveDown(1);
+
+  doc.fontSize(11).fillColor('#0f172a').text('Loan Sanction Details:');
+  doc.fontSize(10).fillColor('#334155')
+     .text(`- Approved Loan Amount: Rs. ${loan.requestAmount}/-`)
+     .text(`- Target Repayment Date: ${loan.returnDate}`)
+     .text(`- Verification Docs: Aadhar (${loan.aadharFileName}), PAN (${loan.panFileName})`);
+  doc.moveDown(2);
+
+  doc.fontSize(10).fillColor('#334155').text('Terms & Conditions:', { underline: true });
+  doc.fontSize(9).text('1. The borrower agrees to repay the full loan amount on or before the specified return date.');
+  doc.text('2. Failure to repay on time will attract standard late fees and legal verification through guarantor contact.');
+  doc.text('3. All disputes are subject to Lucknow jurisdiction.');
+  doc.moveDown(3);
+
+  doc.fontSize(10).fillColor('#0f172a').text(`Digital Signature of Borrower:`, { continued: true });
+  doc.font('Times-Italic').text(`  ${loan.signature}`);
+
+  doc.end();
+});
+
+// ==================== SERVER START ====================
 app.listen(PORT, () => {
-    console.log(`VPS Finance server running on port ${PORT}`);
+  console.log(`LeLe Finance server running on port ${PORT}`);
 });
