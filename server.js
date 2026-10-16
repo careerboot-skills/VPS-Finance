@@ -7,7 +7,7 @@
  * - Ongoing loan restriction (No new loan if active/ongoing loan exists).
  * - PDF Document Uploads (Aadhar & PAN cards).
  * - Drawable Signature Pads for both Client and Financer.
- * - Financer Portal unlocked via passcode 'Paisa25' to Approve/Reject/Complete loans.
+ * - Financer Portal unlocked via passcode 'Paisa25' with custom approved amount entry & signature drawing.
  * - Real-time status tracker for clients with official Agreement PDF download.
  * - Next-gen 4D animated mesh/particle background & dark glassmorphism Tailwind UI.
  */
@@ -602,7 +602,7 @@ app.get('/financer-dashboard', async (req, res) => {
             </td>
             <td class="p-4">
                 <div class="font-black text-emerald-400">₹${loan.requestAmount.toLocaleString()}</div>
-                ${loan.approvedAmount ? `<div class="text-xs text-cyan-400">Appr: ₹${loan.approvedAmount.toLocaleString()}</div>` : ''}
+                ${loan.approvedAmount ? `<div class="text-xs text-cyan-400 font-semibold">Appr: ₹${loan.approvedAmount.toLocaleString()}</div>` : ''}
                 <div class="text-xs text-slate-400">Return: ${loan.returnDate}</div>
             </td>
             <td class="p-4 text-xs text-slate-300 max-w-xs">
@@ -618,15 +618,15 @@ app.get('/financer-dashboard', async (req, res) => {
             <td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-bold border ${badgeColor}">${loan.status}</span></td>
             <td class="p-4 space-y-1 text-right">
                 ${loan.status === 'Pending' ? `
-                    <div class="flex space-x-1 justify-end">
-                        <button onclick="openApprovalModal('${loan._id}',${loan.requestAmount})" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition">Approve</button>
-                        <form action="/reject-loan/${loan._id}" method="POST" class="inline"><button class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition">Reject</button></form>
+                    <div class="flex space-x-2 justify-end">
+                        <button onclick="openApprovalModal('${loan._id}',${loan.requestAmount})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-md shadow-emerald-600/30">Approve & Sign</button>
+                        <form action="/reject-loan/${loan._id}" method="POST" class="inline"><button class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition">Reject</button></form>
                     </div>
                 ` : ''}
                 ${['Approved', 'Ongoing', 'Completed'].includes(loan.status) ? `
-                    <a href="/download-agreement/${loan._id}" class="inline-block px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold"><i class="fa-solid fa-file-pdf"></i> PDF</a>
+                    <a href="/download-agreement/${loan._id}" class="inline-block px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-bold"><i class="fa-solid fa-file-pdf"></i> PDF</a>
                 ` : ''}
-                <form action="/complete-loan/${loan._id}" method="POST" class="inline"><button class="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold">Complete</button></form>
+                <form action="/complete-loan/${loan._id}" method="POST" class="inline"><button class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold">Complete</button></form>
             </td>
         </tr>
         `;
@@ -650,7 +650,7 @@ app.get('/financer-dashboard', async (req, res) => {
                             <th class="py-4 px-4">Client / Mobile</th>
                             <th class="py-4 px-4">Loan Amount</th>
                             <th class="py-4 px-4">Address & Docs</th>
-                            <th class="py-4 px-4">Signature</th>
+                            <th class="py-4 px-4">Client Signature</th>
                             <th class="py-4 px-4">Status</th>
                             <th class="py-4 px-4 text-right">Actions</th>
                         </tr>
@@ -663,33 +663,46 @@ app.get('/financer-dashboard', async (req, res) => {
         </div>
     </div>
 
-    <!-- Approval Modal -->
+    <!-- Stunning Financer Approval & Signature Modal -->
     <div id="approvalModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md hidden items-center justify-center z-50 p-4">
-        <div class="glass-panel max-w-lg w-full p-6 sm:p-8 rounded-3xl border border-emerald-500/30 shadow-2xl space-y-4">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h3 class="text-lg font-bold text-white">Approve Loan & Sign Agreement</h3>
-                <button onclick="closeApprovalModal()" class="text-slate-400 hover:text-white text-xl">&times;</button>
+        <div class="glass-panel max-w-lg w-full p-6 sm:p-8 rounded-3xl border border-emerald-500/30 shadow-2xl space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <i class="fa-solid fa-signature text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white">Financer Loan Sanction</h3>
+                        <p class="text-xs text-slate-400">Enter approved amount & draw digital signature</p>
+                    </div>
+                </div>
+                <button onclick="closeApprovalModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">&times;</button>
             </div>
 
-            <form id="approveForm" method="POST" class="space-y-4">
+            <form id="approveForm" method="POST" class="space-y-5">
                 <div>
-                    <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1 font-medium">Approved Loan Amount (₹)</label>
-                    <input type="number" name="approvedAmount" id="modalApprovedAmount" required class="w-full px-4 py-2.5 glass-input rounded-xl text-white text-sm" />
+                    <label class="block text-xs uppercase tracking-wider text-slate-400 mb-2 font-semibold">Approved Loan Amount (₹)</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-emerald-400 font-bold">₹</span>
+                        <input type="number" name="approvedAmount" id="modalApprovedAmount" required min="1000" max="500000"
+                            class="w-full pl-10 pr-4 py-3 glass-input rounded-xl text-white text-base font-bold placeholder-slate-600" />
+                    </div>
                 </div>
 
                 <div>
-                    <div class="flex justify-between items-center mb-1">
-                        <label class="block text-xs uppercase tracking-wider text-slate-400 font-medium">Financer Digital Signature</label>
-                        <button type="button" id="clearFinancerSig" class="text-xs text-emerald-400 hover:underline">Clear</button>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-xs uppercase tracking-wider text-slate-400 font-semibold">Financer Digital Signature Pad</label>
+                        <button type="button" id="clearFinancerSig" class="text-xs text-emerald-400 hover:underline">Clear Signature</button>
                     </div>
-                    <div class="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden" style="height: 120px;">
+                    <div class="border border-slate-700 rounded-xl bg-slate-900 overflow-hidden relative shadow-inner" style="height: 140px;">
                         <canvas id="financerSigCanvas" class="w-full h-full cursor-crosshair touch-none"></canvas>
                     </div>
                     <input type="hidden" name="financerSignature" id="financerSignatureInput" required />
                 </div>
 
-                <button type="submit" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 font-semibold text-white shadow-lg shadow-emerald-500/25 transition">
-                    Sign & Finalize Approval
+                <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 font-bold text-slate-950 text-base shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-circle-check"></i>
+                    <span>Sign & Finalize Loan Approval</span>
                 </button>
             </form>
         </div>
