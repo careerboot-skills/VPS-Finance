@@ -167,7 +167,7 @@ function renderLayout(title, content) {
                 <h1 class="text-lg font-black tracking-wider bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
                     LELE FINANCE <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">CareerBoot</span>
                 </h1>
-                <p class="text-xs text-slate-400 font-medium">Next-Gen Premium FinTech Ecosystem</p>
+                <p class="text-xs text-slate-400 font-medium">झट पट उधार</p>
             </div>
         </a>
 
@@ -286,7 +286,7 @@ app.get('/', async (req, res) => {
             </div>
 
             <button type="submit" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-bold text-base glow-button flex items-center justify-center space-x-2">
-                <span>Continue to Dashboard</span>
+                <span>Continue for the Loan</span>
                 <i class="fa-solid fa-arrow-right"></i>
             </button>
         </form>
@@ -418,7 +418,7 @@ app.get('/dashboard', async (req, res) => {
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Requested Loan Amount (₹)</label>
-                    <input type="number" name="requestAmount" required min="1000" max="500000" placeholder="e.g. 25000"
+                    <input type="number" name="requestAmount" required min="1000" max="50000" placeholder="e.g. 25000"
                         class="w-full px-4 py-3 glass-input rounded-xl text-white placeholder-slate-600 text-sm">
                 </div>
                 <div>
