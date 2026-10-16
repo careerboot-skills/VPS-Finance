@@ -23,7 +23,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lele_finance';
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/lele_finance';
 
 // Ensure upload directory exists
 const uploadDir = path.join(__dirname, 'uploads');
@@ -188,7 +188,6 @@ function renderLayout(title, content) {
     </footer>
 
     <script>
-        // 4D Animated Interactive Canvas Background
         const canvas = document.getElementById('bg-canvas');
         const ctx = canvas.getContext('2d');
         let width, height;
@@ -261,7 +260,6 @@ function renderLayout(title, content) {
 
 // ==================== ROUTES ====================
 
-// 1. Home / Login & Registration via Mobile
 app.get('/', async (req, res) => {
     if (req.session.clientMobile) {
         return res.redirect('/dashboard');
@@ -313,7 +311,6 @@ app.post('/login', async (req, res) => {
     res.redirect('/dashboard');
 });
 
-// 2. Client Dashboard & Loan Application Status
 app.get('/dashboard', async (req, res) => {
     if (!req.session.clientMobile) return res.redirect('/');
 
@@ -556,7 +553,6 @@ app.get('/logout', (req, res) => {
     });
 });
 
-// 3. Financer Portal & Authentication
 app.get('/financer-login', (req, res) => {
     const content = `
     <div class="w-full max-w-md glass-panel p-8 rounded-3xl relative overflow-hidden mx-auto text-center">
@@ -789,7 +785,6 @@ app.get('/financer-logout', (req, res) => {
     res.redirect('/');
 });
 
-// 4. Professional Agreement PDF Generation Route
 app.get('/download-agreement/:id', async (req, res) => {
     const loan = await Loan.findById(req.params.id);
     if (!loan || !['Approved', 'Ongoing', 'Completed'].includes(loan.status)) {
@@ -802,7 +797,6 @@ app.get('/download-agreement/:id', async (req, res) => {
     const doc = new PDFDocument({ margin: 40, size: 'A4' });
     doc.pipe(res);
 
-    // Header Banner
     doc.fontSize(20).fillColor('#10b981').font('Helvetica-Bold').text('LELE FINANCE CO.', { align: 'center' });
     doc.fontSize(9).fillColor('#64748b').font('Helvetica').text('Co-powered by CareerBoot & Skills Development, Ashiyana, Lucknow, Uttar Pradesh', { align: 'center' });
     doc.moveDown(1);
@@ -810,13 +804,11 @@ app.get('/download-agreement/:id', async (req, res) => {
     doc.lineWidth(1).strokeColor('#e2e8f0').moveTo(40, doc.y).lineTo(555, doc.y).stroke();
     doc.moveDown(1);
 
-    // Document Title
     doc.fontSize(14).fillColor('#0f172a').font('Helvetica-Bold').text('OFFICIAL BINDING LOAN & FINANCING AGREEMENT', { align: 'center' });
     doc.moveDown(0.5);
     doc.fontSize(9).fillColor('#475569').font('Helvetica').text(`Agreement Reference ID: ${loan._id} | Date of Execution: ${new Date(loan.createdAt).toLocaleDateString()}`, { align: 'center' });
     doc.moveDown(1.5);
 
-    // Section 1: Parties
     doc.fontSize(11).fillColor('#10b981').font('Helvetica-Bold').text('1. PARTIES TO THE AGREEMENT');
     doc.fontSize(9).fillColor('#334155').font('Helvetica')
        .text('This agreement is entered into by and between LeLe Finance, hereinafter referred to as the "Financer", and the Borrower specified herein under the terms and conditions outlined below.');
@@ -830,7 +822,6 @@ app.get('/download-agreement/:id', async (req, res) => {
        .text(`• Guarantor Mobile Number: +91 ${loan.guarantorMobile}`);
     doc.moveDown(1.5);
 
-    // Section 2: Financial Terms
     doc.fontSize(11).fillColor('#10b981').font('Helvetica-Bold').text('2. FINANCIAL SANCTION & INTEREST TERMS');
     doc.fontSize(9).fillColor('#334155').font('Helvetica')
        .text(`• Approved Principal Loan Amount: Rs. ${loan.approvedAmount || loan.requestAmount}/- (Requested: Rs. ${loan.requestAmount}/-)`)
@@ -839,7 +830,6 @@ app.get('/download-agreement/:id', async (req, res) => {
        .text(`• Target Repayment Date: ${loan.returnDate}`);
     doc.moveDown(1.5);
 
-    // Section 3: Covenants
     doc.fontSize(11).fillColor('#10b981').font('Helvetica-Bold').text('3. COVENANTS, CONDITIONS & DEFAULT POLICIES');
     doc.fontSize(9).fillColor('#334155').font('Helvetica')
        .text('1. Utilization & Good Faith: The borrower acknowledges receipt of the approved amount and agrees to utilize the funds responsibly.')
@@ -848,7 +838,6 @@ app.get('/download-agreement/:id', async (req, res) => {
        .text('4. Jurisdiction: All disputes arising under this agreement shall be subject exclusively to the courts of Lucknow, Uttar Pradesh.');
     doc.moveDown(2);
 
-    // Signatures
     doc.fontSize(11).fillColor('#10b981').font('Helvetica-Bold').text('4. AUTHORIZED DIGITAL SIGNATURES');
     doc.moveDown(0.5);
 
@@ -871,6 +860,7 @@ app.get('/download-agreement/:id', async (req, res) => {
 });
 
 // ==================== DATABASE CONNECTION & SERVER START ====================
+console.log('Connecting to MongoDB...');
 mongoose.connect(MONGO_URI)
     .then(() => {
         console.log('Connected to MongoDB successfully.');
@@ -879,5 +869,5 @@ mongoose.connect(MONGO_URI)
         });
     })
     .catch(err => {
-        console.error('MongoDB connection error:', err);
+        console.error('MongoDB connection error:', err.message);
     });
