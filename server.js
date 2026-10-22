@@ -17,8 +17,8 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lele_f
 
 // Middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // ----------------------------------------------------------------------------
 // DATABASE MODE (MongoDB + Auto-Fallback In-Memory Store)
@@ -29,8 +29,8 @@ const UserSchema = new mongoose.Schema({
   mobile: { type: String, required: true, unique: true },
   name: { type: String, default: '' },
   address: { type: String, default: '' },
-  aadharDoc: { type: String, default: '' },
-  panDoc: { type: String, default: '' },
+  aadharDoc: { type: String, default: '' }, // Base64 PDF / File Data
+  panDoc: { type: String, default: '' },    // Base64 PDF / File Data
   upiId: { type: String, default: '' },
   leleCivilScore: { type: Number, default: 750 },
   maxLoanLimit: { type: Number, default: 2000 },
@@ -43,6 +43,8 @@ const LoanSchema = new mongoose.Schema({
   mobile: { type: String, required: true },
   name: { type: String, required: true },
   address: { type: String, required: true },
+  aadharDocName: { type: String, default: '' },
+  panDocName: { type: String, default: '' },
   guarantorMobile: { type: String, required: true },
   requestedAmount: { type: Number, default: 2000 },
   upiId: { type: String, required: true },
@@ -51,9 +53,7 @@ const LoanSchema = new mongoose.Schema({
   status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED', 'PAID'], default: 'PENDING' },
   requestDate: { type: Date, default: Date.now },
   returnDueDate: { type: Date, required: true },
-  penaltyApplied: { type: Boolean, default: false },
-  totalAmountDue: { type: Number, default: 2000 },
-  daysOverdue: { type: Number, default: 0 }
+  totalAmountDue: { type: Number, default: 2000 }
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -69,14 +69,14 @@ mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
     console.log('[MongoDB] Connected successfully to Database.');
   })
   .catch(err => {
-    console.warn('[MongoDB] Warning: Connection failed. Switching to robust In-Memory fallback mode for instant testing.', err.message);
+    console.warn('[MongoDB] Warning: Connection failed. Switching to robust In-Memory fallback mode.', err.message);
   });
 
 // ----------------------------------------------------------------------------
 // API ENDPOINTS
 // ----------------------------------------------------------------------------
 
-// 1. Client Auth / Login
+// 1. Client Auth / Login & History Retrieval
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { mobile } = req.body;
@@ -89,10 +89,10 @@ app.post('/api/auth/login', async (req, res) => {
       if (!user) {
         user = await User.create({ mobile });
       }
+      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
       const activeLoan = user.activeLoanId ? await Loan.findById(user.activeLoanId) : null;
-      return res.json({ success: true, user, activeLoan });
+      return res.json({ success: true, user, activeLoan, loanHistory: allLoans });
     } else {
-      // Fallback In-Memory Login
       let user = memUsers.get(mobile);
       if (!user) {
         user = {
@@ -106,18 +106,19 @@ app.post('/api/auth/login', async (req, res) => {
         };
         memUsers.set(mobile, user);
       }
+      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === mobile).reverse();
       const activeLoan = user.activeLoanId ? memLoans.get(user.activeLoanId) : null;
-      return res.json({ success: true, user, activeLoan });
+      return res.json({ success: true, user, activeLoan, loanHistory: userLoans });
     }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 2. Submit Loan Request
+// 2. Submit Loan Request with PDF Documents
 app.post('/api/loan/request', async (req, res) => {
   try {
-    const { mobile, name, address, aadharDoc, panDoc, guarantorMobile, requestedAmount, returnDueDate, upiId, clientSignature } = req.body;
+    const { mobile, name, address, aadharDoc, aadharDocName, panDoc, panDocName, guarantorMobile, requestedAmount, returnDueDate, upiId, clientSignature } = req.body;
     
     if (mobile === guarantorMobile) {
       return res.status(400).json({ success: false, message: 'Guarantor mobile cannot be same as client mobile number.' });
@@ -136,8 +137,8 @@ app.post('/api/loan/request', async (req, res) => {
 
       user.name = name;
       user.address = address;
-      user.aadharDoc = aadharDoc || user.aadharDoc;
-      user.panDoc = panDoc || user.panDoc;
+      if (aadharDoc) user.aadharDoc = aadharDoc;
+      if (panDoc) user.panDoc = panDoc;
       user.upiId = upiId;
 
       const loanAmount = Math.min(Number(requestedAmount) || 2000, user.maxLoanLimit);
@@ -147,6 +148,8 @@ app.post('/api/loan/request', async (req, res) => {
         mobile,
         name,
         address,
+        aadharDocName: aadharDocName || 'Aadhar_Document.pdf',
+        panDocName: panDocName || 'PAN_Document.pdf',
         guarantorMobile,
         requestedAmount: loanAmount,
         totalAmountDue: loanAmount,
@@ -158,9 +161,9 @@ app.post('/api/loan/request', async (req, res) => {
       user.activeLoanId = newLoan._id;
       await user.save();
 
-      return res.json({ success: true, loan: newLoan, user });
+      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
+      return res.json({ success: true, loan: newLoan, user, loanHistory: allLoans });
     } else {
-      // Fallback In-Memory Loan Request
       let user = memUsers.get(mobile);
       if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
@@ -184,6 +187,8 @@ app.post('/api/loan/request', async (req, res) => {
         mobile,
         name,
         address,
+        aadharDocName: aadharDocName || 'Aadhar_Document.pdf',
+        panDocName: panDocName || 'PAN_Document.pdf',
         guarantorMobile,
         requestedAmount: loanAmount,
         totalAmountDue: loanAmount,
@@ -199,7 +204,8 @@ app.post('/api/loan/request', async (req, res) => {
       user.activeLoanId = loanId;
       memUsers.set(mobile, user);
 
-      return res.json({ success: true, loan: newLoan, user });
+      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === mobile).reverse();
+      return res.json({ success: true, loan: newLoan, user, loanHistory: userLoans });
     }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -299,7 +305,9 @@ app.post('/api/loan/repay', async (req, res) => {
 
       await loan.save();
       await user.save();
-      return res.json({ success: true, user, loan });
+
+      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
+      return res.json({ success: true, user, loan, loanHistory: allLoans });
     } else {
       const loan = memLoans.get(loanId);
       if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
@@ -312,7 +320,9 @@ app.post('/api/loan/repay', async (req, res) => {
 
       memUsers.set(user.mobile, user);
       memLoans.set(loanId, loan);
-      return res.json({ success: true, user, loan });
+
+      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === user.mobile).reverse();
+      return res.json({ success: true, user, loan, loanHistory: userLoans });
     }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -405,7 +415,7 @@ app.get('*', (req, res) => {
         </div>
       </div>
 
-      <!-- LOAN FORM OR ACTIVE LOAN STATUS -->
+      <!-- LOAN APPLICATION FORM -->
       <div id="loanRequestForm" class="glass-card rounded-2xl p-8 border-cyan-500/30">
         <h3 class="font-orbitron text-xl font-bold text-cyan-400 mb-6 border-b border-cyan-500/20 pb-3">LOAN APPLICATION</h3>
         
@@ -417,6 +427,14 @@ app.get('*', (req, res) => {
           <div>
             <label class="text-xs text-gray-300">Address</label>
             <input type="text" id="reqAddress" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
+          </div>
+          <div>
+            <label class="text-xs text-gray-300">Aadhar Document (PDF)</label>
+            <input type="file" id="reqAadharFile" accept="application/pdf" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2 text-xs text-cyan-300">
+          </div>
+          <div>
+            <label class="text-xs text-gray-300">PAN Document (PDF)</label>
+            <input type="file" id="reqPanFile" accept="application/pdf" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2 text-xs text-cyan-300">
           </div>
           <div>
             <label class="text-xs text-gray-300">Guarantor Mobile No.</label>
@@ -467,6 +485,14 @@ app.get('*', (req, res) => {
           <button onclick="repayActiveLoan()" class="w-full py-3 bg-emerald-500 text-black font-orbitron font-bold rounded-xl">
             PAY BACK LOAN
           </button>
+        </div>
+      </div>
+
+      <!-- PREVIOUS LOAN HISTORY -->
+      <div class="glass-card rounded-2xl p-6 border-cyan-500/30">
+        <h3 class="font-orbitron text-lg font-bold text-cyan-400 mb-4 border-b border-cyan-500/20 pb-2">PREVIOUS LOAN HISTORY</h3>
+        <div id="historyList" class="space-y-3">
+          <p class="text-xs text-gray-400 italic">No historical loans found.</p>
         </div>
       </div>
 
@@ -538,7 +564,6 @@ app.get('*', (req, res) => {
       canvas.addEventListener('mouseup', () => { drawing = false; ctx.beginPath(); });
       canvas.addEventListener('mousemove', draw);
 
-      // Touch support for mobiles
       canvas.addEventListener('touchstart', (e) => { drawing = true; draw(e.touches[0]); e.preventDefault(); });
       canvas.addEventListener('touchend', () => { drawing = false; ctx.beginPath(); });
       canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
@@ -563,9 +588,18 @@ app.get('*', (req, res) => {
       c.getContext('2d').clearRect(0, 0, c.width, c.height);
     }
 
+    // Helper: Convert File to Base64
+    const fileToBase64 = file => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = error => reject(error);
+    });
+
     // App State Management
     let currentUser = null;
     let currentLoan = null;
+    let loanHistory = [];
 
     async function loginUser() {
       const mobile = document.getElementById('loginMobile').value.trim();
@@ -585,6 +619,7 @@ app.get('*', (req, res) => {
         if (data.success) {
           currentUser = data.user;
           currentLoan = data.activeLoan;
+          loanHistory = data.loanHistory || [];
           renderDashboard();
         } else {
           alert(data.message || 'Login failed');
@@ -623,14 +658,53 @@ app.get('*', (req, res) => {
         document.getElementById('loanRequestForm').classList.remove('hidden');
         document.getElementById('activeLoanCard').classList.add('hidden');
       }
+
+      // Render History List
+      const historyContainer = document.getElementById('historyList');
+      if (loanHistory.length === 0) {
+        historyContainer.innerHTML = '<p class="text-xs text-gray-400 italic">No historical loans found.</p>';
+      } else {
+        historyContainer.innerHTML = loanHistory.map(h => \`
+          <div class="bg-slate-900/60 border border-slate-700/50 rounded-xl p-3 flex justify-between items-center text-xs">
+            <div>
+              <p class="font-bold text-cyan-300">Requested Amount: ₹\${h.requestedAmount}</p>
+              <p class="text-gray-400">Date: \${new Date(h.requestDate).toLocaleDateString()} | UPI: \${h.upiId}</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-md font-bold \${
+              h.status === 'APPROVED' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+              h.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+              h.status === 'REJECTED' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+            }">\${h.status}</span>
+          </div>
+        \`).join('');
+      }
     }
 
     async function submitLoanRequest() {
       const sigCanvas = document.getElementById('clientSigCanvas');
+      const aadharFile = document.getElementById('reqAadharFile').files[0];
+      const panFile = document.getElementById('reqPanFile').files[0];
+
+      let aadharDoc = '', aadharDocName = '';
+      let panDoc = '', panDocName = '';
+
+      if (aadharFile) {
+        aadharDoc = await fileToBase64(aadharFile);
+        aadharDocName = aadharFile.name;
+      }
+      if (panFile) {
+        panDoc = await fileToBase64(panFile);
+        panDocName = panFile.name;
+      }
+
       const payload = {
         mobile: currentUser.mobile,
         name: document.getElementById('reqName').value,
         address: document.getElementById('reqAddress').value,
+        aadharDoc,
+        aadharDocName,
+        panDoc,
+        panDocName,
         guarantorMobile: document.getElementById('reqGuarantor').value,
         returnDueDate: document.getElementById('reqDueDate').value,
         upiId: document.getElementById('reqUpi').value,
@@ -647,6 +721,7 @@ app.get('*', (req, res) => {
       if (data.success) {
         currentLoan = data.loan;
         currentUser = data.user;
+        loanHistory = data.loanHistory || [];
         renderDashboard();
       } else {
         alert(data.message);
@@ -673,6 +748,7 @@ app.get('*', (req, res) => {
             <div>
               <p class="font-bold text-yellow-300">\${l.name} (\${l.mobile})</p>
               <p class="text-xs text-gray-400">Amount: ₹\${l.requestedAmount} | UPI: \${l.upiId}</p>
+              <p class="text-xs text-gray-400">Aadhar Doc: \${l.aadharDocName || 'Attached'} | PAN Doc: \${l.panDocName || 'Attached'}</p>
               <p class="text-xs text-gray-400">Status: \${l.status}</p>
             </div>
             \${l.status === 'PENDING' ? \`
@@ -713,6 +789,7 @@ app.get('*', (req, res) => {
       if (data.success) {
         currentUser = data.user;
         currentLoan = null;
+        loanHistory = data.loanHistory || [];
         renderDashboard();
       }
     }
