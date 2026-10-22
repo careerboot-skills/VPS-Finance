@@ -1,831 +1,1057 @@
 /**
- * ============================================================================
- * LE_LE FINANCE CO-POWERED BY CAREERBOOT
- * Full-Stack Single-File Express + Mongoose Engine & Next-Gen UI
- * ============================================================================
+ * LE_LE FINANCE co-powered by CareerBoot
+ * Single-file Node.js/Express + MongoDB backend & Next-Gen 4D UI Server Application
+ * 
+ * Instructions:
+ * 1. Install dependencies: npm install express mongoose multer jsonwebtoken dotenv cors
+ * 2. Set environment variables (or rely on fallbacks): MONGODB_URI, JWT_SECRET, PORT
+ * 3. Run: node server.js
+ * 4. Deploy to Render / GitHub.
  */
 
 const express = require('express');
 const mongoose = require('mongoose');
+const multer = require('multer');
+const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lele_finance';
+const JWT_SECRET = process.env.JWT_SECRET || 'le_le_finance_super_secret_jwt_key_2026';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lele_finance';
 
-// Middleware
+// Middleware Setup
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-// ----------------------------------------------------------------------------
-// DATABASE MODE (MongoDB + Auto-Fallback In-Memory Store)
-// ----------------------------------------------------------------------------
-let isMongoConnected = false;
+// Configure Uploads Directory
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
 
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB file limit
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed!'), false);
+        }
+    }
+});
+
+// Serve Static Uploads Safely
+app.use('/uploads', express.static(uploadDir));
+
+// Connect to MongoDB
+mongoose.connect(MONGODB_URI)
+    .then(() => console.log('Successfully connected to MongoDB.'))
+    .catch(err => console.error('MongoDB Connection Error:', err));
+
+// Database Schemas & Models
 const UserSchema = new mongoose.Schema({
-  mobile: { type: String, required: true, unique: true },
-  name: { type: String, default: '' },
-  address: { type: String, default: '' },
-  aadharDoc: { type: String, default: '' }, // Base64 PDF / File Data
-  panDoc: { type: String, default: '' },    // Base64 PDF / File Data
-  upiId: { type: String, default: '' },
-  leleCivilScore: { type: Number, default: 750 },
-  maxLoanLimit: { type: Number, default: 2000 },
-  activeLoanId: { type: mongoose.Schema.Types.ObjectId, ref: 'Loan', default: null },
-  createdAt: { type: Date, default: Date.now }
+    mobile: { type: String, required: true, unique: true },
+    name: { type: String, default: '' },
+    address: { type: String, default: '' },
+    civilScore: { type: Number, default: 750 },
+    maxLimit: { type: Number, default: 2000 },
+    createdAt: { type: Date, default: Date.now }
 });
 
 const LoanSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  mobile: { type: String, required: true },
-  name: { type: String, required: true },
-  address: { type: String, required: true },
-  aadharDocName: { type: String, default: '' },
-  panDocName: { type: String, default: '' },
-  guarantorMobile: { type: String, required: true },
-  requestedAmount: { type: Number, default: 2000 },
-  upiId: { type: String, required: true },
-  clientSignature: { type: String, required: true },
-  financerSignature: { type: String, default: '' },
-  status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED', 'PAID'], default: 'PENDING' },
-  requestDate: { type: Date, default: Date.now },
-  returnDueDate: { type: Date, required: true },
-  totalAmountDue: { type: Number, default: 2000 }
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    clientMobile: { type: String, required: true },
+    clientName: { type: String, required: true },
+    address: { type: String, required: true },
+    guarantorMobile: { type: String, required: true },
+    requestedAmount: { type: Number, required: true },
+    returnDate: { type: Date, required: true },
+    upiId: { type: String, required: true },
+    aadharPdfUrl: { type: String, required: true },
+    panPdfUrl: { type: String, required: true },
+    clientSignature: { type: String, required: true }, // Base64 string
+    
+    // Status tracking: 'PENDING', 'APPROVED', 'REJECTED', 'PAID'
+    status: { type: String, default: 'PENDING' },
+    financerSignature: { type: String, default: '' },
+    approvalDate: { type: Date },
+    rejectionReason: { type: String, default: '' },
+    penaltyInterest: { type: Number, default: 0 },
+    
+    createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
 const Loan = mongoose.model('Loan', LoanSchema);
 
-// In-memory fallback store if MongoDB isn't connected
-const memUsers = new Map();
-const memLoans = new Map();
-
-mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
-  .then(() => {
-    isMongoConnected = true;
-    console.log('[MongoDB] Connected successfully to Database.');
-  })
-  .catch(err => {
-    console.warn('[MongoDB] Warning: Connection failed. Switching to robust In-Memory fallback mode.', err.message);
-  });
-
-// ----------------------------------------------------------------------------
-// API ENDPOINTS
-// ----------------------------------------------------------------------------
-
-// 1. Client Auth / Login & History Retrieval
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { mobile } = req.body;
-    if (!mobile || mobile.length < 10) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
-    }
-
-    if (isMongoConnected) {
-      let user = await User.findOne({ mobile });
-      if (!user) {
-        user = await User.create({ mobile });
-      }
-      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
-      const activeLoan = user.activeLoanId ? await Loan.findById(user.activeLoanId) : null;
-      return res.json({ success: true, user, activeLoan, loanHistory: allLoans });
-    } else {
-      let user = memUsers.get(mobile);
-      if (!user) {
-        user = {
-          _id: 'user_' + Date.now(),
-          mobile,
-          name: '',
-          address: '',
-          leleCivilScore: 750,
-          maxLoanLimit: 2000,
-          activeLoanId: null
-        };
-        memUsers.set(mobile, user);
-      }
-      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === mobile).reverse();
-      const activeLoan = user.activeLoanId ? memLoans.get(user.activeLoanId) : null;
-      return res.json({ success: true, user, activeLoan, loanHistory: userLoans });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 2. Submit Loan Request with PDF Documents
-app.post('/api/loan/request', async (req, res) => {
-  try {
-    const { mobile, name, address, aadharDoc, aadharDocName, panDoc, panDocName, guarantorMobile, requestedAmount, returnDueDate, upiId, clientSignature } = req.body;
-    
-    if (mobile === guarantorMobile) {
-      return res.status(400).json({ success: false, message: 'Guarantor mobile cannot be same as client mobile number.' });
-    }
-
-    if (isMongoConnected) {
-      const user = await User.findOne({ mobile });
-      if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-
-      if (user.activeLoanId) {
-        const existingLoan = await Loan.findById(user.activeLoanId);
-        if (existingLoan && (existingLoan.status === 'PENDING' || existingLoan.status === 'APPROVED')) {
-          return res.status(400).json({ success: false, message: 'No loan eligibility while an active loan is ongoing.' });
-        }
-      }
-
-      user.name = name;
-      user.address = address;
-      if (aadharDoc) user.aadharDoc = aadharDoc;
-      if (panDoc) user.panDoc = panDoc;
-      user.upiId = upiId;
-
-      const loanAmount = Math.min(Number(requestedAmount) || 2000, user.maxLoanLimit);
-
-      const newLoan = await Loan.create({
-        userId: user._id,
-        mobile,
-        name,
-        address,
-        aadharDocName: aadharDocName || 'Aadhar_Document.pdf',
-        panDocName: panDocName || 'PAN_Document.pdf',
-        guarantorMobile,
-        requestedAmount: loanAmount,
-        totalAmountDue: loanAmount,
-        returnDueDate: new Date(returnDueDate),
-        upiId,
-        clientSignature
-      });
-
-      user.activeLoanId = newLoan._id;
-      await user.save();
-
-      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
-      return res.json({ success: true, loan: newLoan, user, loanHistory: allLoans });
-    } else {
-      let user = memUsers.get(mobile);
-      if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-
-      if (user.activeLoanId) {
-        const existingLoan = memLoans.get(user.activeLoanId);
-        if (existingLoan && (existingLoan.status === 'PENDING' || existingLoan.status === 'APPROVED')) {
-          return res.status(400).json({ success: false, message: 'No loan eligibility while an active loan is ongoing.' });
-        }
-      }
-
-      user.name = name;
-      user.address = address;
-      user.upiId = upiId;
-
-      const loanId = 'loan_' + Date.now();
-      const loanAmount = Math.min(Number(requestedAmount) || 2000, user.maxLoanLimit);
-
-      const newLoan = {
-        _id: loanId,
-        userId: user._id,
-        mobile,
-        name,
-        address,
-        aadharDocName: aadharDocName || 'Aadhar_Document.pdf',
-        panDocName: panDocName || 'PAN_Document.pdf',
-        guarantorMobile,
-        requestedAmount: loanAmount,
-        totalAmountDue: loanAmount,
-        returnDueDate,
-        upiId,
-        clientSignature,
-        financerSignature: '',
-        status: 'PENDING',
-        requestDate: new Date()
-      };
-
-      memLoans.set(loanId, newLoan);
-      user.activeLoanId = loanId;
-      memUsers.set(mobile, user);
-
-      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === mobile).reverse();
-      return res.json({ success: true, loan: newLoan, user, loanHistory: userLoans });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 3. Financer Portal - Fetch All Applications
-app.post('/api/financer/applications', async (req, res) => {
-  try {
-    const { code } = req.body;
-    if (code !== 'Paisa25') {
-      return res.status(401).json({ success: false, message: 'Invalid Access Code' });
-    }
-
-    if (isMongoConnected) {
-      const loans = await Loan.find().sort({ requestDate: -1 });
-      return res.json({ success: true, loans });
-    } else {
-      const loans = Array.from(memLoans.values()).reverse();
-      return res.json({ success: true, loans });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 4. Financer Portal - Approve / Reject Loan
-app.post('/api/financer/action', async (req, res) => {
-  try {
-    const { code, loanId, action, financerSignature } = req.body;
-    if (code !== 'Paisa25') {
-      return res.status(401).json({ success: false, message: 'Invalid Access Code' });
-    }
-
-    if (isMongoConnected) {
-      const loan = await Loan.findById(loanId);
-      if (!loan) return res.status(404).json({ success: false, message: 'Loan request not found' });
-
-      if (action === 'APPROVE') {
-        if (!financerSignature) {
-          return res.status(400).json({ success: false, message: 'Financer signature is required to approve.' });
-        }
-        loan.status = 'APPROVED';
-        loan.financerSignature = financerSignature;
-      } else if (action === 'REJECT') {
-        loan.status = 'REJECTED';
-        loan.financerSignature = financerSignature || '';
-        await User.findByIdAndUpdate(loan.userId, { activeLoanId: null });
-      }
-
-      await loan.save();
-      return res.json({ success: true, loan });
-    } else {
-      const loan = memLoans.get(loanId);
-      if (!loan) return res.status(404).json({ success: false, message: 'Loan request not found' });
-
-      if (action === 'APPROVE') {
-        loan.status = 'APPROVED';
-        loan.financerSignature = financerSignature;
-      } else if (action === 'REJECT') {
-        loan.status = 'REJECTED';
-        loan.financerSignature = financerSignature || '';
-        const user = memUsers.get(loan.mobile);
-        if (user) { user.activeLoanId = null; memUsers.set(loan.mobile, user); }
-      }
-      memLoans.set(loanId, loan);
-      return res.json({ success: true, loan });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 5. Repay Loan & Trigger LeLe Civil Score Update
-app.post('/api/loan/repay', async (req, res) => {
-  try {
-    const { loanId } = req.body;
-
-    if (isMongoConnected) {
-      const loan = await Loan.findById(loanId);
-      if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
-
-      const user = await User.findById(loan.userId);
-      const today = new Date();
-      const dueDate = new Date(loan.returnDueDate);
-      const isPastDue = today > dueDate;
-
-      if (!isPastDue) {
-        user.leleCivilScore = Math.min(900, user.leleCivilScore + 35);
-        user.maxLoanLimit = Math.round(user.maxLoanLimit * 1.25);
-      } else {
-        user.leleCivilScore = Math.max(300, user.leleCivilScore - 75);
-      }
-
-      loan.status = 'PAID';
-      user.activeLoanId = null;
-
-      await loan.save();
-      await user.save();
-
-      const allLoans = await Loan.find({ userId: user._id }).sort({ requestDate: -1 });
-      return res.json({ success: true, user, loan, loanHistory: allLoans });
-    } else {
-      const loan = memLoans.get(loanId);
-      if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
-
-      const user = memUsers.get(loan.mobile);
-      user.leleCivilScore = Math.min(900, user.leleCivilScore + 35);
-      user.maxLoanLimit = Math.round(user.maxLoanLimit * 1.25);
-      user.activeLoanId = null;
-      loan.status = 'PAID';
-
-      memUsers.set(user.mobile, user);
-      memLoans.set(loanId, loan);
-
-      const userLoans = Array.from(memLoans.values()).filter(l => l.mobile === user.mobile).reverse();
-      return res.json({ success: true, user, loan, loanHistory: userLoans });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ----------------------------------------------------------------------------
-// SERVE EMBEDDED SINGLE-PAGE WEB FRONTEND
-// ----------------------------------------------------------------------------
-
-app.get('*', (req, res) => {
-  res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Le_Le Finance co-powered by CareerBoot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Rajdhani', sans-serif; background: #030712; color: #f3f4f6; overflow-x: hidden; }
-    .font-orbitron { font-family: 'Orbitron', sans-serif; }
-    .glass-card { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
-    .glass-card-gold { background: rgba(20, 16, 5, 0.9); backdrop-filter: blur(16px); border: 1px solid rgba(234, 179, 8, 0.3); box-shadow: 0 0 30px rgba(234, 179, 8, 0.15); }
-    canvas#bgCanvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
-  </style>
-</head>
-<body class="min-h-screen flex flex-col justify-between">
-
-  <canvas id="bgCanvas"></canvas>
-
-  <!-- NAVBAR -->
-  <nav class="w-full glass-card px-6 py-4 flex justify-between items-center z-50 border-b border-cyan-500/20">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
-        <span class="font-orbitron font-black text-xl text-black">L</span>
-      </div>
-      <div>
-        <h1 class="font-orbitron text-xl font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-500">Le_Le Finance</h1>
-        <p class="text-[10px] text-gray-400 tracking-widest uppercase">Co-powered by <span class="text-cyan-400 font-bold">CareerBoot</span></p>
-      </div>
-    </div>
-    
-    <div class="flex items-center gap-4">
-      <button onclick="openFinancerModal()" class="px-4 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/20 text-xs font-bold tracking-wider transition">
-        🔒 FINANCER PORTAL
-      </button>
-      <div id="userBadge" class="hidden text-xs bg-cyan-950/60 border border-cyan-500/30 px-3 py-1.5 rounded-lg text-cyan-300"></div>
-    </div>
-  </nav>
-
-  <!-- MAIN CONTAINER -->
-  <main class="container mx-auto px-4 py-8 flex-1 flex flex-col items-center justify-center">
-
-    <!-- AUTH SECTION -->
-    <div id="authSection" class="w-full max-w-md glass-card rounded-2xl p-8 border-cyan-500/30 shadow-2xl">
-      <h2 class="font-orbitron text-2xl font-bold text-center text-cyan-400 mb-2">CLIENT LOGIN</h2>
-      <p class="text-xs text-gray-400 text-center mb-6">Enter mobile number to request interest-free micro-loans</p>
-      <div class="space-y-4">
-        <div>
-          <label class="text-xs text-gray-300 font-semibold mb-1 block">Mobile Number</label>
-          <input type="tel" id="loginMobile" placeholder="Enter 10-digit mobile no." class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-3 text-cyan-200 focus:outline-none focus:border-cyan-400">
-        </div>
-        <button onclick="loginUser()" class="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-orbitron font-bold text-black tracking-wider hover:opacity-90 transition">
-          ENTER PORTAL
-        </button>
-      </div>
-    </div>
-
-    <!-- DASHBOARD SECTION -->
-    <div id="dashboardSection" class="hidden w-full max-w-4xl space-y-6">
-      
-      <!-- CIBIL SCORE DISPLAY -->
-      <div class="glass-card rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-6 border-cyan-500/30">
-        <div>
-          <span class="text-xs font-bold tracking-widest text-gray-400 uppercase">LeLe Civil Score</span>
-          <div class="flex items-baseline gap-3 mt-1">
-            <span id="cibilVal" class="font-orbitron text-4xl font-black text-cyan-400">750</span>
-            <span class="text-xs text-emerald-400 font-bold">▲ Excellent</span>
-          </div>
-          <p class="text-xs text-gray-400 mt-2">Maximum Available Limit: <span id="limitVal" class="text-yellow-400 font-bold">₹2000</span></p>
-        </div>
-        <div class="text-right text-xs text-gray-400 border-l border-gray-700 pl-6 space-y-1">
-          <p>• ₹2000 0% Interest for 30 Days</p>
-          <p>• 5% Daily Penalty post Day 30</p>
-          <p>• On-time payoff increases credit limit +25%</p>
-        </div>
-      </div>
-
-      <!-- LOAN APPLICATION FORM -->
-      <div id="loanRequestForm" class="glass-card rounded-2xl p-8 border-cyan-500/30">
-        <h3 class="font-orbitron text-xl font-bold text-cyan-400 mb-6 border-b border-cyan-500/20 pb-3">LOAN APPLICATION</h3>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="text-xs text-gray-300">Full Name</label>
-            <input type="text" id="reqName" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">Address</label>
-            <input type="text" id="reqAddress" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">Aadhar Document (PDF)</label>
-            <input type="file" id="reqAadharFile" accept="application/pdf" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2 text-xs text-cyan-300">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">PAN Document (PDF)</label>
-            <input type="file" id="reqPanFile" accept="application/pdf" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2 text-xs text-cyan-300">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">Guarantor Mobile No.</label>
-            <input type="tel" id="reqGuarantor" placeholder="Must be different from yours" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">Return Due Date</label>
-            <input type="date" id="reqDueDate" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">UPI ID (For Disbursal)</label>
-            <input type="text" id="reqUpi" placeholder="username@upi" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-          <div>
-            <label class="text-xs text-gray-300">Request Amount (Max ₹2000)</label>
-            <input type="number" id="reqAmount" value="2000" max="2000" class="w-full bg-slate-900/80 border border-cyan-500/30 rounded-xl px-4 py-2.5 text-cyan-200">
-          </div>
-        </div>
-
-        <div class="mt-6">
-          <label class="text-xs text-gray-300 mb-2 block">Client Signature (Draw Below)</label>
-          <div class="bg-slate-900/90 rounded-xl border border-cyan-500/30 p-2">
-            <canvas id="clientSigCanvas" width="400" height="120" class="w-full bg-slate-950 rounded-lg cursor-crosshair"></canvas>
-            <button onclick="clearCanvas('clientSigCanvas')" class="mt-2 text-xs text-red-400 hover:underline">Clear Signature</button>
-          </div>
-        </div>
-
-        <button onclick="submitLoanRequest()" class="mt-6 w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-orbitron font-bold text-black tracking-wider">
-          SUBMIT LOAN REQUEST
-        </button>
-      </div>
-
-      <!-- ACTIVE LOAN CARD -->
-      <div id="activeLoanCard" class="hidden glass-card rounded-2xl p-8 border-cyan-500/30 space-y-6">
-        <div class="flex justify-between items-center border-b border-gray-700 pb-4">
-          <div>
-            <span class="text-xs text-gray-400">ACTIVE LOAN STATUS</span>
-            <h4 id="loanStatusBadge" class="font-orbitron text-2xl font-bold text-yellow-400">PENDING APPROVAL</h4>
-          </div>
-          <button id="downloadPdfBtn" onclick="generateAgreementPDF()" class="hidden px-4 py-2 bg-purple-600/30 border border-purple-500/50 text-purple-300 rounded-xl text-xs font-bold">
-            📄 DOWNLOAD AGREEMENT PDF
-          </button>
-        </div>
-
-        <div id="loanDetailsGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm"></div>
-
-        <div id="repaySection" class="hidden pt-4 border-t border-gray-700">
-          <button onclick="repayActiveLoan()" class="w-full py-3 bg-emerald-500 text-black font-orbitron font-bold rounded-xl">
-            PAY BACK LOAN
-          </button>
-        </div>
-      </div>
-
-      <!-- PREVIOUS LOAN HISTORY -->
-      <div class="glass-card rounded-2xl p-6 border-cyan-500/30">
-        <h3 class="font-orbitron text-lg font-bold text-cyan-400 mb-4 border-b border-cyan-500/20 pb-2">PREVIOUS LOAN HISTORY</h3>
-        <div id="historyList" class="space-y-3">
-          <p class="text-xs text-gray-400 italic">No historical loans found.</p>
-        </div>
-      </div>
-
-    </div>
-
-  </main>
-
-  <!-- FINANCER MODAL -->
-  <div id="financerModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-    <div class="glass-card-gold max-w-3xl w-full rounded-2xl p-6 border-yellow-500/40 max-h-[90vh] overflow-y-auto">
-      
-      <div id="financerAuth">
-        <h3 class="font-orbitron text-xl font-bold text-yellow-400 mb-4">FINANCER UNLOCK</h3>
-        <input type="password" id="financerCode" placeholder="Enter Top Secret Code" class="w-full bg-slate-900 border border-yellow-500/40 rounded-xl px-4 py-3 text-yellow-300 mb-4">
-        <button onclick="unlockFinancer()" class="w-full py-3 bg-yellow-500 text-black font-orbitron font-bold rounded-xl">UNLOCK PORTAL</button>
-      </div>
-
-      <div id="financerPanel" class="hidden space-y-6">
-        <div class="flex justify-between items-center border-b border-yellow-500/20 pb-4">
-          <h3 class="font-orbitron text-xl font-bold text-yellow-400">REQUESTED APPLICATIONS</h3>
-          <button onclick="closeFinancerModal()" class="text-xs text-gray-400 hover:text-white">CLOSE</button>
-        </div>
-
-        <div class="mb-4">
-          <label class="text-xs text-yellow-200 block mb-1">Financer Signature (Required for Approval)</label>
-          <canvas id="financerSigCanvas" width="400" height="100" class="w-full bg-slate-950 border border-yellow-500/30 rounded-lg cursor-crosshair"></canvas>
-          <button onclick="clearCanvas('financerSigCanvas')" class="text-xs text-red-400 mt-1">Clear</button>
-        </div>
-
-        <div id="applicationsList" class="space-y-4"></div>
-      </div>
-
-    </div>
-  </div>
-
-  <script>
-    // Three.js Background Particle Scene
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('bgCanvas'), alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-
-    const geometry = new THREE.BufferGeometry();
-    const count = 1200;
-    const positions = new Float32Array(count * 3);
-    for(let i=0; i<count*3; i++) positions[i] = (Math.random() - 0.5) * 10;
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    const material = new THREE.PointsMaterial({ size: 0.02, color: 0x06b6d4, transparent: true, opacity: 0.6 });
-    const particles = new THREE.Points(geometry, material);
-    scene.add(particles);
-    camera.position.z = 3;
-
-    function animate() {
-      requestAnimationFrame(animate);
-      particles.rotation.y += 0.001;
-      particles.rotation.x += 0.0005;
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // Canvas Signature Pad Logic
-    function setupCanvas(canvasId) {
-      const canvas = document.getElementById(canvasId);
-      const ctx = canvas.getContext('2d');
-      let drawing = false;
-
-      canvas.addEventListener('mousedown', (e) => { drawing = true; draw(e); });
-      canvas.addEventListener('mouseup', () => { drawing = false; ctx.beginPath(); });
-      canvas.addEventListener('mousemove', draw);
-
-      canvas.addEventListener('touchstart', (e) => { drawing = true; draw(e.touches[0]); e.preventDefault(); });
-      canvas.addEventListener('touchend', () => { drawing = false; ctx.beginPath(); });
-      canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
-
-      function draw(e) {
-        if(!drawing) return;
-        const rect = canvas.getBoundingClientRect();
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'round';
-        ctx.strokeStyle = '#06b6d4';
-        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
-      }
-    }
-    setupCanvas('clientSigCanvas');
-    setupCanvas('financerSigCanvas');
-
-    function clearCanvas(id) {
-      const c = document.getElementById(id);
-      c.getContext('2d').clearRect(0, 0, c.width, c.height);
-    }
-
-    // Helper: Convert File to Base64
-    const fileToBase64 = file => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = error => reject(error);
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Access denied. Token missing.' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token.' });
+        req.user = user;
+        next();
     });
+};
 
-    // App State Management
-    let currentUser = null;
-    let currentLoan = null;
-    let loanHistory = [];
+// ==================== API ENDPOINTS ====================
 
-    async function loginUser() {
-      const mobile = document.getElementById('loginMobile').value.trim();
-      if (!mobile || mobile.length < 10) {
-        alert('Please enter a valid 10-digit mobile number.');
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mobile })
-        });
-        const data = await res.json();
-
-        if (data.success) {
-          currentUser = data.user;
-          currentLoan = data.activeLoan;
-          loanHistory = data.loanHistory || [];
-          renderDashboard();
-        } else {
-          alert(data.message || 'Login failed');
-        }
-      } catch (err) {
-        alert('Network or server connection error: ' + err.message);
-      }
-    }
-
-    function renderDashboard() {
-      document.getElementById('authSection').classList.add('hidden');
-      document.getElementById('dashboardSection').classList.remove('hidden');
-      document.getElementById('userBadge').classList.remove('hidden');
-      document.getElementById('userBadge').innerText = \`📱 \${currentUser.mobile}\`;
-
-      document.getElementById('cibilVal').innerText = currentUser.leleCivilScore;
-      document.getElementById('limitVal').innerText = \`₹\${currentUser.maxLoanLimit}\`;
-
-      if (currentLoan && (currentLoan.status === 'PENDING' || currentLoan.status === 'APPROVED')) {
-        document.getElementById('loanRequestForm').classList.add('hidden');
-        document.getElementById('activeLoanCard').classList.remove('hidden');
-        
-        document.getElementById('loanStatusBadge').innerText = currentLoan.status;
-        if (currentLoan.status === 'APPROVED') {
-          document.getElementById('downloadPdfBtn').classList.remove('hidden');
-          document.getElementById('repaySection').classList.remove('hidden');
+// Auth Endpoint: Client Login / Registration by Mobile
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { mobile } = req.body;
+        if (!mobile || !/^\d{10}$/.test(mobile)) {
+            return res.status(400).json({ error: 'Please enter a valid 10-digit mobile number.' });
         }
 
-        document.getElementById('loanDetailsGrid').innerHTML = \`
-          <div><span class="text-gray-400 block text-xs">Amount</span><b>₹\${currentLoan.requestedAmount}</b></div>
-          <div><span class="text-gray-400 block text-xs">Due Date</span><b>\${new Date(currentLoan.returnDueDate).toLocaleDateString()}</b></div>
-          <div><span class="text-gray-400 block text-xs">UPI ID</span><b>\${currentLoan.upiId}</b></div>
-          <div><span class="text-gray-400 block text-xs">Guarantor</span><b>\${currentLoan.guarantorMobile}</b></div>
-        \`;
-      } else {
-        document.getElementById('loanRequestForm').classList.remove('hidden');
-        document.getElementById('activeLoanCard').classList.add('hidden');
-      }
+        let user = await User.findOne({ mobile });
+        if (!user) {
+            user = await User.create({ mobile, civilScore: 750, maxLimit: 2000 });
+        }
 
-      // Render History List
-      const historyContainer = document.getElementById('historyList');
-      if (loanHistory.length === 0) {
-        historyContainer.innerHTML = '<p class="text-xs text-gray-400 italic">No historical loans found.</p>';
-      } else {
-        historyContainer.innerHTML = loanHistory.map(h => \`
-          <div class="bg-slate-900/60 border border-slate-700/50 rounded-xl p-3 flex justify-between items-center text-xs">
-            <div>
-              <p class="font-bold text-cyan-300">Requested Amount: ₹\${h.requestedAmount}</p>
-              <p class="text-gray-400">Date: \${new Date(h.requestDate).toLocaleDateString()} | UPI: \${h.upiId}</p>
-            </div>
-            <span class="px-2.5 py-1 rounded-md font-bold \${
-              h.status === 'APPROVED' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
-              h.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-              h.status === 'REJECTED' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-            }">\${h.status}</span>
-          </div>
-        \`).join('');
-      }
+        const token = jwt.sign({ userId: user._id, mobile: user.mobile }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ token, user });
+    } catch (err) {
+        res.status(500).json({ error: 'Server Auth Error: ' + err.message });
     }
-
-    async function submitLoanRequest() {
-      const sigCanvas = document.getElementById('clientSigCanvas');
-      const aadharFile = document.getElementById('reqAadharFile').files[0];
-      const panFile = document.getElementById('reqPanFile').files[0];
-
-      let aadharDoc = '', aadharDocName = '';
-      let panDoc = '', panDocName = '';
-
-      if (aadharFile) {
-        aadharDoc = await fileToBase64(aadharFile);
-        aadharDocName = aadharFile.name;
-      }
-      if (panFile) {
-        panDoc = await fileToBase64(panFile);
-        panDocName = panFile.name;
-      }
-
-      const payload = {
-        mobile: currentUser.mobile,
-        name: document.getElementById('reqName').value,
-        address: document.getElementById('reqAddress').value,
-        aadharDoc,
-        aadharDocName,
-        panDoc,
-        panDocName,
-        guarantorMobile: document.getElementById('reqGuarantor').value,
-        returnDueDate: document.getElementById('reqDueDate').value,
-        upiId: document.getElementById('reqUpi').value,
-        requestedAmount: document.getElementById('reqAmount').value,
-        clientSignature: sigCanvas.toDataURL()
-      };
-
-      const res = await fetch('/api/loan/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success) {
-        currentLoan = data.loan;
-        currentUser = data.user;
-        loanHistory = data.loanHistory || [];
-        renderDashboard();
-      } else {
-        alert(data.message);
-      }
-    }
-
-    function openFinancerModal() { document.getElementById('financerModal').classList.remove('hidden'); }
-    function closeFinancerModal() { document.getElementById('financerModal').classList.add('hidden'); }
-
-    async function unlockFinancer() {
-      const code = document.getElementById('financerCode').value;
-      const res = await fetch('/api/financer/applications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
-      });
-      const data = await res.json();
-      if (data.success) {
-        document.getElementById('financerAuth').classList.add('hidden');
-        document.getElementById('financerPanel').classList.remove('hidden');
-        
-        const listHtml = data.loans.map(l => \`
-          <div class="bg-slate-900 border border-yellow-500/20 p-4 rounded-xl flex justify-between items-center">
-            <div>
-              <p class="font-bold text-yellow-300">\${l.name} (\${l.mobile})</p>
-              <p class="text-xs text-gray-400">Amount: ₹\${l.requestedAmount} | UPI: \${l.upiId}</p>
-              <p class="text-xs text-gray-400">Aadhar Doc: \${l.aadharDocName || 'Attached'} | PAN Doc: \${l.panDocName || 'Attached'}</p>
-              <p class="text-xs text-gray-400">Status: \${l.status}</p>
-            </div>
-            \${l.status === 'PENDING' ? \`
-              <div class="flex gap-2">
-                <button onclick="handleFinancerAction('\${l._id}', 'APPROVE')" class="px-3 py-1 bg-emerald-500 text-black text-xs font-bold rounded">Approve</button>
-                <button onclick="handleFinancerAction('\${l._id}', 'REJECT')" class="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded">Reject</button>
-              </div>
-            \` : ''}
-          </div>
-        \`).join('');
-        document.getElementById('applicationsList').innerHTML = listHtml;
-      } else {
-        alert('Invalid Code');
-      }
-    }
-
-    async function handleFinancerAction(loanId, action) {
-      const code = document.getElementById('financerCode').value;
-      const sigCanvas = document.getElementById('financerSigCanvas');
-      const res = await fetch('/api/financer/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, loanId, action, financerSignature: sigCanvas.toDataURL() })
-      });
-      const data = await res.json();
-      if (data.success) {
-        unlockFinancer();
-      }
-    }
-
-    async function repayActiveLoan() {
-      const res = await fetch('/api/loan/repay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loanId: currentLoan._id })
-      });
-      const data = await res.json();
-      if (data.success) {
-        currentUser = data.user;
-        currentLoan = null;
-        loanHistory = data.loanHistory || [];
-        renderDashboard();
-      }
-    }
-
-    function generateAgreementPDF() {
-      const element = document.createElement('div');
-      element.innerHTML = \`
-        <div style="padding: 20px; font-family: Arial; color: #000;">
-          <h2>LE_LE FINANCE LOAN AGREEMENT</h2>
-          <p>Co-powered by CareerBoot</p>
-          <hr/>
-          <p><b>Client Name:</b> \${currentLoan.name}</p>
-          <p><b>Mobile:</b> \${currentLoan.mobile}</p>
-          <p><b>Address:</b> \${currentLoan.address}</p>
-          <p><b>Loan Amount:</b> ₹\${currentLoan.requestedAmount} (0% Interest up to 30 days)</p>
-          <p><b>Due Return Date:</b> \${new Date(currentLoan.returnDueDate).toLocaleDateString()}</p>
-          <br/>
-          <div>
-            <p><b>Client Signature:</b></p>
-            <img src="\${currentLoan.clientSignature}" width="150" />
-          </div>
-          <div>
-            <p><b>Financer Signature:</b></p>
-            <img src="\${currentLoan.financerSignature}" width="150" />
-          </div>
-        </div>
-      \`;
-      html2pdf().from(element).save('LeLe_Finance_Agreement.pdf');
-    }
-  </script>
-</body>
-</html>
-  `);
 });
 
-// Start Express Server
+// Fetch Current Client Profile
+app.get('/api/client/profile', authenticateToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId);
+        const activeLoan = await Loan.findOne({ userId: req.user.userId, status: { $in: ['PENDING', 'APPROVED'] } });
+        res.json({ user, activeLoan });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Client Submit Loan Application
+app.post('/api/loans/apply', authenticateToken, upload.fields([
+    { name: 'aadharPdf', maxCount: 1 },
+    { name: 'panPdf', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        const { name, address, guarantorMobile, requestedAmount, returnDate, upiId, clientSignature } = req.body;
+        const userId = req.user.userId;
+        const clientMobile = req.user.mobile;
+
+        // Validation Checks
+        if (guarantorMobile === clientMobile) {
+            return res.status(400).json({ error: "Guarantor mobile number cannot be the same as client's number." });
+        }
+
+        const activeLoan = await Loan.findOne({ userId, status: { $in: ['PENDING', 'APPROVED'] } });
+        if (activeLoan) {
+            return res.status(400).json({ error: "You already have an active or pending loan. New applications are locked until completion." });
+        }
+
+        const user = await User.findById(userId);
+        const amount = parseFloat(requestedAmount);
+        if (amount > user.maxLimit) {
+            return res.status(400).json({ error: `Requested amount exceeds your maximum allowed limit of ₹${user.maxLimit}` });
+        }
+
+        if (!req.files || !req.files.aadharPdf || !req.files.panPdf) {
+            return res.status(400).json({ error: "Both Aadhar and PAN PDF documents are strictly required." });
+        }
+
+        // Update basic profile details
+        user.name = name;
+        user.address = address;
+        await user.save();
+
+        const loan = new Loan({
+            userId,
+            clientMobile,
+            clientName: name,
+            address,
+            guarantorMobile,
+            requestedAmount: amount,
+            returnDate: new Date(returnDate),
+            upiId,
+            aadharPdfUrl: `/uploads/${req.files.aadharPdf[0].filename}`,
+            panPdfUrl: `/uploads/${req.files.panPdf[0].filename}`,
+            clientSignature
+        });
+
+        await loan.save();
+        res.json({ message: "Loan application submitted successfully!", loan });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Financer: Verify Passcode Access
+app.post('/api/financer/verify', (req, res) => {
+    const { code } = req.body;
+    if (code === 'Paisa25') {
+        res.json({ success: true, message: 'Financer portal unlocked successfully.' });
+    } else {
+        res.status(401).json({ error: 'Incorrect Passcode! Access Denied.' });
+    }
+});
+
+// Financer: Fetch All Applications
+app.post('/api/financer/loans', async (req, res) => {
+    const { code } = req.body;
+    if (code !== 'Paisa25') return res.status(403).json({ error: 'Unauthorized.' });
+
+    try {
+        const loans = await Loan.find().populate('userId').sort({ createdAt: -1 });
+        res.json(loans);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Financer: Approve or Reject Loan
+app.post('/api/financer/decision', async (req, res) => {
+    const { code, loanId, decision, financerSignature, customLimit } = req.body;
+    if (code !== 'Paisa25') return res.status(403).json({ error: 'Unauthorized.' });
+
+    try {
+        const loan = await Loan.findById(loanId);
+        if (!loan) return res.status(404).json({ error: 'Loan request not found.' });
+
+        if (decision === 'APPROVE') {
+            if (!financerSignature) return res.status(400).json({ error: 'Financer signature is mandatory for loan approval.' });
+            loan.status = 'APPROVED';
+            loan.financerSignature = financerSignature;
+            loan.approvalDate = new Date();
+        } else if (decision === 'REJECT') {
+            loan.status = 'REJECTED';
+            
+            // Defaulter / Rejection penalty impact on LeLe Civil Score
+            const user = await User.findById(loan.userId);
+            if (user) {
+                user.civilScore = Math.max(300, user.civilScore - 50);
+                if (customLimit !== undefined) {
+                    user.maxLimit = parseFloat(customLimit);
+                }
+                await user.save();
+            }
+        }
+
+        await loan.save();
+        res.json({ message: `Loan successfully ${decision.toLowerCase()}d.`, loan });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Client/Financer: Repay Loan Endpoint (Calculates Interest & Upgrades Score)
+app.post('/api/loans/repay', authenticateToken, async (req, res) => {
+    try {
+        const { loanId } = req.body;
+        const loan = await Loan.findById(loanId);
+        if (!loan || loan.status !== 'APPROVED') return res.status(400).json({ error: 'Invalid active loan.' });
+
+        const user = await User.findById(loan.userId);
+        const today = new Date();
+        const createdDate = new Date(loan.createdAt);
+        const diffTime = Math.abs(today - createdDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        let latePenaltyInterest = 0;
+        let isLate = false;
+
+        // Check 30-Day Rule
+        if (diffDays > 30) {
+            isLate = true;
+            const overdueDays = diffDays - 30;
+            // 5% interest per day overdue
+            latePenaltyInterest = loan.requestedAmount * (0.05 * overdueDays);
+        }
+
+        loan.status = 'PAID';
+        loan.penaltyInterest = latePenaltyInterest;
+        await loan.save();
+
+        if (!isLate) {
+            // Paid on time: Increase civil score and auto-increase limit by 25%
+            user.civilScore = Math.min(900, user.civilScore + 35);
+            user.maxLimit = Math.round(user.maxLimit * 1.25);
+        } else {
+            // Defaulter: Drop civil score
+            user.civilScore = Math.max(300, user.civilScore - 75);
+        }
+        await user.save();
+
+        res.json({ 
+            message: isLate ? `Loan Repaid with 5%/day overdue penalty.` : `Loan Repaid on time! Your credit limit increased by 25%!`,
+            civilScore: user.civilScore,
+            newLimit: user.maxLimit
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==================== SERVE CLIENT FRONTEND ====================
+app.get('*', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Le_Le Finance | co-powered by CareerBoot</title>
+        <!-- Tailwind CSS & Lucide Icons -->
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://unpkg.com/lucide@latest"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
+            body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030712; color: #f3f4f6; overflow-x: hidden; }
+            canvas#canvas4d { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
+            .glass { background: rgba(17, 24, 39, 0.65); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+            .glass-gold { background: rgba(245, 158, 11, 0.05); backdrop-filter: blur(16px); border: 1px solid rgba(245, 158, 11, 0.2); }
+            .glow-text { text-shadow: 0 0 20px rgba(59, 130, 246, 0.6); }
+            .glow-gold { text-shadow: 0 0 20px rgba(245, 158, 11, 0.6); }
+            .btn-glow { box-shadow: 0 0 25px rgba(59, 130, 246, 0.4); }
+            .btn-glow:hover { box-shadow: 0 0 35px rgba(59, 130, 246, 0.7); }
+        </style>
+    </head>
+    <body class="relative min-h-screen">
+
+        <!-- 4D Interactive Three.js Background -->
+        <canvas id="canvas4d"></canvas>
+
+        <div class="relative z-10 flex flex-col min-h-screen">
+            <!-- Header Nav -->
+            <header class="glass sticky top-0 z-50 px-6 py-4 flex justify-between items-center border-b border-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-yellow-500 via-amber-400 to-amber-600 flex items-center justify-center font-black text-2xl text-black shadow-lg shadow-amber-500/20 tracking-tighter">
+                        L₹
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-extrabold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-amber-400 via-yellow-200 to-amber-500">
+                            Le_Le Finance
+                        </h1>
+                        <p class="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">co-powered by CareerBoot</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <button id="financerBtn" onclick="openFinancerModal()" class="px-4 py-2 rounded-xl bg-gray-900/80 border border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-black font-semibold text-xs transition-all flex items-center gap-2">
+                        <i data-lucide="shield-check" class="w-4 h-4"></i> Financer Portal
+                    </button>
+                    <button id="logoutBtn" onclick="logout()" class="hidden px-3 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 text-xs">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Content Container -->
+            <main class="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
+
+                <!-- Auth Screen -->
+                <div id="authScreen" class="glass p-8 rounded-3xl max-w-md mx-auto w-full shadow-2xl border border-gray-800 my-auto">
+                    <div class="text-center mb-8">
+                        <h2 class="text-3xl font-extrabold text-white mb-2">Welcome Back</h2>
+                        <p class="text-gray-400 text-sm">Enter your 10-digit mobile number to access Instant 0% Interest Loans.</p>
+                    </div>
+                    <form onsubmit="handleLogin(event)" class="space-y-6">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Mobile Number</label>
+                            <div class="relative">
+                                <span class="absolute left-4 top-3.5 text-gray-400 text-sm font-bold">+91</span>
+                                <input type="tel" id="loginMobile" maxlength="10" required placeholder="9005041462" class="w-full bg-gray-950 border border-gray-800 rounded-xl py-3.5 pl-14 pr-4 text-white font-medium focus:border-amber-400 focus:ring-1 focus:ring-amber-400 outline-none transition">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-extrabold text-sm uppercase tracking-wider btn-glow hover:opacity-95 transition">
+                            Continue / Express Register
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Dashboard Screen -->
+                <div id="dashboardScreen" class="hidden space-y-6">
+                    <!-- Civil Score Banner -->
+                    <div class="glass-gold p-6 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+                        <div class="space-y-2 text-center md:text-left">
+                            <span class="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold uppercase tracking-wider">
+                                LeLe Credit Health Profile
+                            </span>
+                            <h3 class="text-2xl font-black text-white">Credit Score & Allowed Limit</h3>
+                            <p class="text-xs text-gray-400 max-w-md">Every timely payback automatically boosts your credit standing and unlocks a 25% higher borrowing limit!</p>
+                        </div>
+                        <div class="flex items-center gap-6">
+                            <div class="text-center">
+                                <p class="text-xs uppercase text-gray-400 font-bold tracking-wider">LeLe Civil Score</p>
+                                <p id="civilScoreVal" class="text-4xl font-black text-amber-400 glow-gold">750</p>
+                            </div>
+                            <div class="h-10 w-[1px] bg-gray-800"></div>
+                            <div class="text-center">
+                                <p class="text-xs uppercase text-gray-400 font-bold tracking-wider">Max Limit</p>
+                                <p id="maxLimitVal" class="text-4xl font-black text-green-400 glow-text">₹2,000</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ongoing Active Loan Card -->
+                    <div id="activeLoanContainer" class="hidden glass p-6 rounded-3xl space-y-6 border border-amber-500/30">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span id="loanStatusBadge" class="px-3 py-1 rounded-full text-xs font-bold uppercase"></span>
+                                <h4 class="text-xl font-extrabold text-white mt-2">Active Loan Agreement</h4>
+                            </div>
+                            <button id="downloadAgreementBtn" onclick="downloadAgreementPDF()" class="hidden px-4 py-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold hover:bg-amber-500 hover:text-black transition flex items-center gap-2">
+                                <i data-lucide="download" class="w-4 h-4"></i> Download Agreement PDF
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950/60 p-4 rounded-2xl border border-gray-800/60">
+                            <div>
+                                <p class="text-xs text-gray-400">Principal Amount</p>
+                                <p id="loanAmount" class="text-lg font-bold text-white">₹0</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-400">Interest Terms</p>
+                                <p class="text-lg font-bold text-green-400">0% (30 Days Free)</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-400">Due Date</p>
+                                <p id="loanReturnDate" class="text-lg font-bold text-amber-400">-</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-400">UPI Receival Address</p>
+                                <p id="loanUpi" class="text-lg font-bold text-gray-200">-</p>
+                            </div>
+                        </div>
+
+                        <div id="repaySection" class="hidden pt-2 flex justify-end">
+                            <button onclick="repayLoan()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-green-500/20">
+                                Repay Full Amount Now
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Application Locked Alert -->
+                    <div id="lockedNotice" class="hidden glass p-6 rounded-3xl text-center space-y-2 border border-blue-500/30">
+                        <i data-lucide="lock" class="w-8 h-8 text-blue-400 mx-auto"></i>
+                        <h4 class="text-lg font-bold text-white">New Loan Applications Locked</h4>
+                        <p class="text-xs text-gray-400">You currently have an active or pending loan request. Complete or clear your existing loan to unlock a new application.</p>
+                    </div>
+
+                    <!-- Loan Request Form -->
+                    <div id="applicationFormContainer" class="glass p-8 rounded-3xl space-y-6">
+                        <h3 class="text-2xl font-black text-white flex items-center gap-2">
+                            <i data-lucide="file-plus" class="w-6 h-6 text-amber-400"></i> Request Micro-Loan
+                        </h3>
+
+                        <form id="loanForm" onsubmit="submitLoanApplication(event)" class="space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Full Client Name</label>
+                                    <input type="text" id="clientName" required placeholder="Vaibhav Joshi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Guarantor Mobile Number</label>
+                                    <input type="tel" id="guarantorMobile" maxlength="10" required placeholder="Must be different from client" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Complete Address</label>
+                                <textarea id="clientAddress" required rows="2" placeholder="Ashiyana, Lucknow, Uttar Pradesh" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none"></textarea>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Loan Amount (Max ₹2,000)</label>
+                                    <input type="number" id="requestedAmount" max="2000" min="100" required value="2000" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Return Date</label>
+                                    <input type="date" id="returnDate" required class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">UPI ID (For Funds Transfer)</label>
+                                    <input type="text" id="upiId" required placeholder="user@upi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                </div>
+                            </div>
+
+                            <!-- PDF Uploads -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div class="p-4 border border-dashed border-gray-700 rounded-2xl bg-gray-950/40">
+                                    <label class="block text-xs font-semibold uppercase text-gray-300 mb-2">Upload Aadhar PDF</label>
+                                    <input type="file" id="aadharPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-300 hover:file:bg-amber-500/30">
+                                </div>
+                                <div class="p-4 border border-dashed border-gray-700 rounded-2xl bg-gray-950/40">
+                                    <label class="block text-xs font-semibold uppercase text-gray-300 mb-2">Upload PAN PDF</label>
+                                    <input type="file" id="panPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-300 hover:file:bg-amber-500/30">
+                                </div>
+                            </div>
+
+                            <!-- Signature Pad -->
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <label class="text-xs font-semibold uppercase text-gray-400">Client Digital Signature (Draw Below)</label>
+                                    <button type="button" onclick="clearSignature('clientSigCanvas')" class="text-xs text-amber-400 hover:underline">Clear Canvas</button>
+                                </div>
+                                <canvas id="clientSigCanvas" width="500" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-xl touch-none"></canvas>
+                            </div>
+
+                            <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-extrabold text-sm uppercase tracking-wider btn-glow hover:opacity-95 transition">
+                                Submit Formal Loan Request
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+            </main>
+
+            <!-- Footer -->
+            <footer class="glass px-6 py-4 text-center text-xs text-gray-500 border-t border-gray-800 mt-auto">
+                Le_Le Finance co-powered by <span class="text-amber-400 font-bold">CareerBoot</span> &copy; 2026. All rights reserved. 0% Interest subject to 30-day repayment.
+            </footer>
+        </div>
+
+        <!-- Financer Unlocking Modal -->
+        <div id="financerCodeModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div class="glass p-8 rounded-3xl max-w-sm w-full space-y-6 border border-amber-500/30">
+                <div class="text-center">
+                    <i data-lucide="shield-alert" class="w-10 h-10 text-amber-400 mx-auto mb-2"></i>
+                    <h3 class="text-xl font-bold text-white">Financer Gateway</h3>
+                    <p class="text-xs text-gray-400">Enter Top Secret Access Code to unlock dashboard.</p>
+                </div>
+                <input type="password" id="financerPasscode" placeholder="Enter Secret Code" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-center text-white tracking-widest outline-none focus:border-amber-400">
+                <div class="flex gap-3">
+                    <button onclick="closeFinancerModal()" class="w-1/2 py-3 rounded-xl bg-gray-800 text-gray-300 font-bold text-xs uppercase">Cancel</button>
+                    <button onclick="unlockFinancerPortal()" class="w-1/2 py-3 rounded-xl bg-amber-500 text-black font-extrabold text-xs uppercase shadow-lg shadow-amber-500/20">Unlock</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Financer Admin Portal View Screen -->
+        <div id="financerPortalModal" class="hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-lg overflow-y-auto p-4 sm:p-8">
+            <div class="max-w-6xl mx-auto space-y-6">
+                <div class="flex justify-between items-center glass p-6 rounded-3xl border border-amber-500/40">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center font-black text-black">
+                            L₹
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold text-white">Financer Control Center</h2>
+                            <p class="text-xs text-amber-400">Secret Access Granted • Live Loan Demands</p>
+                        </div>
+                    </div>
+                    <button onclick="closeFinancerPortal()" class="px-4 py-2 rounded-xl bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-bold">
+                        Exit Portal
+                    </button>
+                </div>
+
+                <!-- Loan Requests Grid -->
+                <div id="financerLoanList" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- Financer Approval Signature Modal -->
+        <div id="approvalModal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div class="glass p-8 rounded-3xl max-w-lg w-full space-y-6 border border-amber-500/40">
+                <h3 class="text-xl font-bold text-white">Authorize & Approve Loan Application</h3>
+                <p class="text-xs text-gray-400">Draw your signature below as the authorized financer to complete agreement execution.</p>
+                
+                <canvas id="financerSigCanvas" width="450" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-xl touch-none"></canvas>
+                
+                <div class="flex justify-between items-center">
+                    <button type="button" onclick="clearSignature('financerSigCanvas')" class="text-xs text-amber-400">Clear</button>
+                    <div class="flex gap-3">
+                        <button onclick="closeApprovalModal()" class="px-4 py-2 rounded-xl bg-gray-800 text-gray-300 text-xs font-bold">Cancel</button>
+                        <button onclick="confirmApproval()" class="px-5 py-2 rounded-xl bg-green-500 text-black font-extrabold text-xs uppercase">Sign & Approve</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden PDF Printable Agreement Container -->
+        <div id="pdfTemplate" class="hidden bg-white text-black p-10 space-y-6 text-sm font-serif">
+            <div class="text-center border-b-2 border-black pb-4">
+                <h1 class="text-2xl font-bold uppercase">Le_Le Finance Loan Agreement</h1>
+                <p class="text-xs italic">Co-Powered by CareerBoot Center of Excellence</p>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 text-xs">
+                <div><strong>Agreement Date:</strong> <span id="pdfDate"></span></div>
+                <div><strong>Status:</strong> <span id="pdfStatus">APPROVED</span></div>
+                <div><strong>Client Name:</strong> <span id="pdfClientName"></span></div>
+                <div><strong>Client Mobile:</strong> <span id="pdfClientMobile"></span></div>
+                <div><strong>Guarantor Mobile:</strong> <span id="pdfGuarantor"></span></div>
+                <div><strong>Client Address:</strong> <span id="pdfAddress"></span></div>
+            </div>
+
+            <div class="border p-4 bg-gray-50 rounded">
+                <h3 class="font-bold border-b pb-1 mb-2">Loan Financial Terms</h3>
+                <p><strong>Approved Principal Amount:</strong> ₹<span id="pdfAmount"></span></p>
+                <p><strong>Interest Rate:</strong> 0% Interest for first 30 Days.</p>
+                <p><strong>Scheduled Return Date:</strong> <span id="pdfReturnDate"></span></p>
+                <p><strong>Default Terms:</strong> Beyond 30 days, an interest penalty of 5% per day will apply until full loan liquidation.</p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-8 pt-8">
+                <div class="text-center">
+                    <img id="pdfClientSig" class="h-16 mx-auto border-b border-black mb-1" alt="Client Signature">
+                    <p class="font-bold text-xs">Client Signature</p>
+                </div>
+                <div class="text-center">
+                    <img id="pdfFinancerSig" class="h-16 mx-auto border-b border-black mb-1" alt="Financer Signature">
+                    <p class="font-bold text-xs">Authorized Financer Signature</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- JavaScript Logic -->
+        <script>
+            let authToken = localStorage.getItem('lele_token') || '';
+            let currentActiveLoan = null;
+            let financerCode = '';
+            let pendingApprovalLoanId = null;
+
+            // Signature Pads
+            function initSignaturePad(canvasId) {
+                const canvas = document.getElementById(canvasId);
+                const ctx = canvas.getContext('2d');
+                let drawing = false;
+
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 2.5;
+                ctx.lineCap = 'round';
+
+                function getPos(e) {
+                    const rect = canvas.getBoundingClientRect();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    return { x: clientX - rect.left, y: clientY - rect.top };
+                }
+
+                function startDraw(e) { drawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); }
+                function draw(e) { if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+                function endDraw() { drawing = false; }
+
+                canvas.addEventListener('mousedown', startDraw);
+                canvas.addEventListener('mousemove', draw);
+                canvas.addEventListener('mouseup', endDraw);
+                canvas.addEventListener('touchstart', startDraw);
+                canvas.addEventListener('touchmove', draw);
+                canvas.addEventListener('touchend', endDraw);
+            }
+
+            function clearSignature(canvasId) {
+                const canvas = document.getElementById(canvasId);
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // Init Three.js 4D Animated Background
+            function init4DBackground() {
+                const canvas = document.getElementById('canvas4d');
+                const scene = new THREE.Scene();
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+
+                // Create geometric hyper-mesh particles
+                const geometry = new THREE.IcosahedronGeometry(10, 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0xd97706, wireframe: true, transparent: true, opacity: 0.15 });
+                const sphere = new THREE.Mesh(geometry, material);
+                scene.add(sphere);
+
+                camera.position.z = 25;
+
+                function animate() {
+                    requestAnimationFrame(animate);
+                    sphere.rotation.x += 0.002;
+                    sphere.rotation.y += 0.003;
+                    renderer.render(scene, camera);
+                }
+                animate();
+
+                window.addEventListener('resize', () => {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+            }
+
+            // Auth Logic
+            async function handleLogin(e) {
+                e.preventDefault();
+                const mobile = document.getElementById('loginMobile').value;
+                try {
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mobile })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        authToken = data.token;
+                        localStorage.setItem('lele_token', authToken);
+                        loadDashboard();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert('Login failed: ' + err.message);
+                }
+            }
+
+            function logout() {
+                localStorage.removeItem('lele_token');
+                authToken = '';
+                document.getElementById('authScreen').classList.remove('hidden');
+                document.getElementById('dashboardScreen').classList.add('hidden');
+                document.getElementById('logoutBtn').classList.add('hidden');
+            }
+
+            async function loadDashboard() {
+                if (!authToken) return;
+                try {
+                    const res = await fetch('/api/client/profile', {
+                        headers: { 'Authorization': \`Bearer \${authToken}\` }
+                    });
+                    const data = await res.json();
+
+                    if (res.ok) {
+                        document.getElementById('authScreen').classList.add('hidden');
+                        document.getElementById('dashboardScreen').classList.remove('hidden');
+                        document.getElementById('logoutBtn').classList.remove('hidden');
+
+                        document.getElementById('civilScoreVal').innerText = data.user.civilScore;
+                        document.getElementById('maxLimitVal').innerText = \`₹\${data.user.maxLimit.toLocaleString()}\`;
+
+                        if (data.user.name) document.getElementById('clientName').value = data.user.name;
+                        if (data.user.address) document.getElementById('clientAddress').value = data.user.address;
+
+                        currentActiveLoan = data.activeLoan;
+                        renderActiveLoanUI();
+                    } else {
+                        logout();
+                    }
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+
+            function renderActiveLoanUI() {
+                const activeContainer = document.getElementById('activeLoanContainer');
+                const lockedNotice = document.getElementById('lockedNotice');
+                const formContainer = document.getElementById('applicationFormContainer');
+                const agreementBtn = document.getElementById('downloadAgreementBtn');
+                const repaySec = document.getElementById('repaySection');
+
+                if (currentActiveLoan) {
+                    activeContainer.classList.remove('hidden');
+                    lockedNotice.classList.remove('hidden');
+                    formContainer.classList.add('hidden');
+
+                    document.getElementById('loanAmount').innerText = \`₹\${currentActiveLoan.requestedAmount}\`;
+                    document.getElementById('loanReturnDate').innerText = new Date(currentActiveLoan.returnDate).toLocaleDateString();
+                    document.getElementById('loanUpi').innerText = currentActiveLoan.upiId;
+
+                    const badge = document.getElementById('loanStatusBadge');
+                    if (currentActiveLoan.status === 'PENDING') {
+                        badge.className = "px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 text-xs font-bold uppercase";
+                        badge.innerText = "Application Under Review";
+                        agreementBtn.classList.add('hidden');
+                        repaySec.classList.add('hidden');
+                    } else if (currentActiveLoan.status === 'APPROVED') {
+                        badge.className = "px-3 py-1 rounded-full bg-green-500/20 text-green-300 border border-green-500/40 text-xs font-bold uppercase";
+                        badge.innerText = "Loan Approved & Disbursed";
+                        agreementBtn.classList.remove('hidden');
+                        repaySec.classList.remove('hidden');
+                    }
+                } else {
+                    activeContainer.classList.add('hidden');
+                    lockedNotice.classList.add('hidden');
+                    formContainer.classList.remove('hidden');
+                }
+            }
+
+            async function submitLoanApplication(e) {
+                e.preventDefault();
+                const canvas = document.getElementById('clientSigCanvas');
+                const sigData = canvas.toDataURL();
+
+                const formData = new FormData();
+                formData.append('name', document.getElementById('clientName').value);
+                formData.append('guarantorMobile', document.getElementById('guarantorMobile').value);
+                formData.append('address', document.getElementById('clientAddress').value);
+                formData.append('requestedAmount', document.getElementById('requestedAmount').value);
+                formData.append('returnDate', document.getElementById('returnDate').value);
+                formData.append('upiId', document.getElementById('upiId').value);
+                formData.append('aadharPdf', document.getElementById('aadharPdf').files[0]);
+                formData.append('panPdf', document.getElementById('panPdf').files[0]);
+                formData.append('clientSignature', sigData);
+
+                try {
+                    const res = await fetch('/api/loans/apply', {
+                        method: 'POST',
+                        headers: { 'Authorization': \`Bearer \${authToken}\` },
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert(data.message);
+                        loadDashboard();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert("Submission failed: " + err.message);
+                }
+            }
+
+            async function repayLoan() {
+                if (!currentActiveLoan) return;
+                if (!confirm("Confirm repayment of loan amount back to Le_Le Finance?")) return;
+
+                try {
+                    const res = await fetch('/api/loans/repay', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': \`Bearer \${authToken}\`
+                        },
+                        body: JSON.stringify({ loanId: currentActiveLoan._id })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert(data.message);
+                        loadDashboard();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert("Repayment processing error.");
+                }
+            }
+
+            // Financer Admin Modal Logic
+            function openFinancerModal() {
+                document.getElementById('financerCodeModal').classList.remove('hidden');
+            }
+            function closeFinancerModal() {
+                document.getElementById('financerCodeModal').classList.add('hidden');
+            }
+
+            async function unlockFinancerPortal() {
+                const code = document.getElementById('financerPasscode').value;
+                try {
+                    const res = await fetch('/api/financer/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        financerCode = code;
+                        closeFinancerModal();
+                        document.getElementById('financerPortalModal').classList.remove('hidden');
+                        loadFinancerLoans();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert("Verification error.");
+                }
+            }
+
+            function closeFinancerPortal() {
+                document.getElementById('financerPortalModal').classList.add('hidden');
+            }
+
+            async function loadFinancerLoans() {
+                try {
+                    const res = await fetch('/api/financer/loans', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: financerCode })
+                    });
+                    const loans = await res.json();
+
+                    const container = document.getElementById('financerLoanList');
+                    container.innerHTML = '';
+
+                    loans.forEach(loan => {
+                        const card = document.createElement('div');
+                        card.className = "glass p-6 rounded-2xl border border-gray-800 space-y-4";
+                        card.innerHTML = \`
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h4 class="text-lg font-bold text-white">\${loan.clientName} (\${loan.clientMobile})</h4>
+                                    <p class="text-xs text-gray-400">Address: \${loan.address}</p>
+                                    <p class="text-xs text-amber-400 font-semibold">Guarantor Mobile: \${loan.guarantorMobile}</p>
+                                </div>
+                                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase \${loan.status === 'APPROVED' ? 'bg-green-500/20 text-green-400' : loan.status === 'REJECTED' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}">\${loan.status}</span>
+                            </div>
+
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950 p-4 rounded-xl text-xs">
+                                <div><span class="text-gray-500">Requested Amount:</span> <p class="text-white font-bold text-sm">₹\${loan.requestedAmount}</p></div>
+                                <div><span class="text-gray-500">Return Date:</span> <p class="text-amber-400 font-bold text-sm">\${new Date(loan.returnDate).toLocaleDateString()}</p></div>
+                                <div><span class="text-gray-500">UPI ID:</span> <p class="text-gray-200 font-bold text-sm">\${loan.upiId}</p></div>
+                                <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-green-400 font-bold text-sm">\${loan.userId ? loan.userId.civilScore : 750}</p></div>
+                            </div>
+
+                            <div class="flex gap-4">
+                                <a href="\${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-lg bg-gray-800 text-xs font-bold text-gray-300 hover:bg-gray-700 flex items-center gap-1">
+                                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i> View Aadhar PDF
+                                </a>
+                                <a href="\${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-lg bg-gray-800 text-xs font-bold text-gray-300 hover:bg-gray-700 flex items-center gap-1">
+                                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i> View PAN PDF
+                                </a>
+                            </div>
+
+                            \${loan.status === 'PENDING' ? \`
+                                <div class="flex gap-3 pt-2">
+                                    <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-green-500 text-black font-extrabold text-xs uppercase shadow-md shadow-green-500/20">
+                                        Approve Loan
+                                    </button>
+                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/20 text-red-400 border border-red-500/30 font-bold text-xs uppercase">
+                                        Reject Loan
+                                    </button>
+                                </div>
+                            \` : ''}
+                        \`;
+                        container.appendChild(card);
+                    });
+                    lucide.createIcons();
+                } catch (err) {
+                    alert("Error loading financer requests.");
+                }
+            }
+
+            function openApprovalModal(loanId) {
+                pendingApprovalLoanId = loanId;
+                document.getElementById('approvalModal').classList.remove('hidden');
+            }
+            function closeApprovalModal() {
+                pendingApprovalLoanId = null;
+                document.getElementById('approvalModal').classList.add('hidden');
+            }
+
+            async function confirmApproval() {
+                if (!pendingApprovalLoanId) return;
+                const canvas = document.getElementById('financerSigCanvas');
+                const financerSig = canvas.toDataURL();
+
+                try {
+                    const res = await fetch('/api/financer/decision', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            code: financerCode,
+                            loanId: pendingApprovalLoanId,
+                            decision: 'APPROVE',
+                            financerSignature: financerSig
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert(data.message);
+                        closeApprovalModal();
+                        loadFinancerLoans();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert("Approval failed.");
+                }
+            }
+
+            async function rejectLoan(loanId) {
+                const customLimit = prompt("Enter new adjusted max limit for this defaulter/rejected client (or leave blank):", "1000");
+                try {
+                    const res = await fetch('/api/financer/decision', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            code: financerCode,
+                            loanId: loanId,
+                            decision: 'REJECT',
+                            customLimit: customLimit ? parseFloat(customLimit) : undefined
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert(data.message);
+                        loadFinancerLoans();
+                    } else {
+                        alert(data.error);
+                    }
+                } catch (err) {
+                    alert("Rejection failed.");
+                }
+            }
+
+            // Generate & Download Agreement PDF
+            function downloadAgreementPDF() {
+                if (!currentActiveLoan) return;
+                
+                document.getElementById('pdfDate').innerText = new Date(currentActiveLoan.createdAt).toLocaleDateString();
+                document.getElementById('pdfClientName').innerText = currentActiveLoan.clientName;
+                document.getElementById('pdfClientMobile').innerText = currentActiveLoan.clientMobile;
+                document.getElementById('pdfGuarantor').innerText = currentActiveLoan.guarantorMobile;
+                document.getElementById('pdfAddress').innerText = currentActiveLoan.address;
+                document.getElementById('pdfAmount').innerText = currentActiveLoan.requestedAmount;
+                document.getElementById('pdfReturnDate').innerText = new Date(currentActiveLoan.returnDate).toLocaleDateString();
+
+                document.getElementById('pdfClientSig').src = currentActiveLoan.clientSignature;
+                document.getElementById('pdfFinancerSig').src = currentActiveLoan.financerSignature;
+
+                const element = document.getElementById('pdfTemplate');
+                element.classList.remove('hidden');
+
+                const opt = {
+                    margin:       0.5,
+                    filename:     \`LeLe_Finance_Agreement_\${currentActiveLoan._id}.pdf\`,
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2 },
+                    jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+                };
+
+                html2pdf().set(opt).from(element).save().then(() => {
+                    element.classList.add('hidden');
+                });
+            }
+
+            // Init canvas signature pads and dashboard load on page ready
+            window.addEventListener('load', () => {
+                init4DBackground();
+                initSignaturePad('clientSigCanvas');
+                initSignaturePad('financerSigCanvas');
+                lucide.createIcons();
+
+                if (authToken) {
+                    loadDashboard();
+                }
+            });
+        </script>
+    </body>
+    </html>
+    `);
+});
+
+// Start Express Application Server
 app.listen(PORT, () => {
-  console.log(`[Le_Le Finance Server] Running on port ${PORT}`);
+    console.log(`Le_Le Finance Server is running on port ${PORT}`);
 });
