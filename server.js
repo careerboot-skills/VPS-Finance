@@ -9,7 +9,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -22,15 +21,16 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // ----------------------------------------------------------------------------
-// MONGODB SCHEMAS & MODELS
+// DATABASE MODE (MongoDB + Auto-Fallback In-Memory Store)
 // ----------------------------------------------------------------------------
+let isMongoConnected = false;
 
 const UserSchema = new mongoose.Schema({
   mobile: { type: String, required: true, unique: true },
   name: { type: String, default: '' },
   address: { type: String, default: '' },
-  aadharDoc: { type: String, default: '' }, // Base64 / File Reference
-  panDoc: { type: String, default: '' },    // Base64 / File Reference
+  aadharDoc: { type: String, default: '' },
+  panDoc: { type: String, default: '' },
   upiId: { type: String, default: '' },
   leleCivilScore: { type: Number, default: 750 },
   maxLoanLimit: { type: Number, default: 2000 },
@@ -46,8 +46,8 @@ const LoanSchema = new mongoose.Schema({
   guarantorMobile: { type: String, required: true },
   requestedAmount: { type: Number, default: 2000 },
   upiId: { type: String, required: true },
-  clientSignature: { type: String, required: true }, // Base64 SVG/PNG DataURL
-  financerSignature: { type: String, default: '' },   // Base64 SVG/PNG DataURL
+  clientSignature: { type: String, required: true },
+  financerSignature: { type: String, default: '' },
   status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED', 'PAID'], default: 'PENDING' },
   requestDate: { type: Date, default: Date.now },
   returnDueDate: { type: Date, required: true },
@@ -59,10 +59,18 @@ const LoanSchema = new mongoose.Schema({
 const User = mongoose.model('User', UserSchema);
 const Loan = mongoose.model('Loan', LoanSchema);
 
-// MongoDB Connection
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('[MongoDB] Connected successfully to Database.'))
-  .catch(err => console.error('[MongoDB] Connection Error:', err));
+// In-memory fallback store if MongoDB isn't connected
+const memUsers = new Map();
+const memLoans = new Map();
+
+mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
+  .then(() => {
+    isMongoConnected = true;
+    console.log('[MongoDB] Connected successfully to Database.');
+  })
+  .catch(err => {
+    console.warn('[MongoDB] Warning: Connection failed. Switching to robust In-Memory fallback mode for instant testing.', err.message);
+  });
 
 // ----------------------------------------------------------------------------
 // API ENDPOINTS
@@ -73,14 +81,34 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { mobile } = req.body;
     if (!mobile || mobile.length < 10) {
-      return res.status(400).json({ success: false, message: 'Invalid mobile number' });
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
     }
-    let user = await User.findOne({ mobile });
-    if (!user) {
-      user = await User.create({ mobile });
+
+    if (isMongoConnected) {
+      let user = await User.findOne({ mobile });
+      if (!user) {
+        user = await User.create({ mobile });
+      }
+      const activeLoan = user.activeLoanId ? await Loan.findById(user.activeLoanId) : null;
+      return res.json({ success: true, user, activeLoan });
+    } else {
+      // Fallback In-Memory Login
+      let user = memUsers.get(mobile);
+      if (!user) {
+        user = {
+          _id: 'user_' + Date.now(),
+          mobile,
+          name: '',
+          address: '',
+          leleCivilScore: 750,
+          maxLoanLimit: 2000,
+          activeLoanId: null
+        };
+        memUsers.set(mobile, user);
+      }
+      const activeLoan = user.activeLoanId ? memLoans.get(user.activeLoanId) : null;
+      return res.json({ success: true, user, activeLoan });
     }
-    const activeLoan = user.activeLoanId ? await Loan.findById(user.activeLoanId) : null;
-    res.json({ success: true, user, activeLoan });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -95,42 +123,84 @@ app.post('/api/loan/request', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Guarantor mobile cannot be same as client mobile number.' });
     }
 
-    const user = await User.findOne({ mobile });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+    if (isMongoConnected) {
+      const user = await User.findOne({ mobile });
+      if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
-    if (user.activeLoanId) {
-      const existingLoan = await Loan.findById(user.activeLoanId);
-      if (existingLoan && (existingLoan.status === 'PENDING' || existingLoan.status === 'APPROVED')) {
-        return res.status(400).json({ success: false, message: 'No loan eligibility while an active loan is ongoing.' });
+      if (user.activeLoanId) {
+        const existingLoan = await Loan.findById(user.activeLoanId);
+        if (existingLoan && (existingLoan.status === 'PENDING' || existingLoan.status === 'APPROVED')) {
+          return res.status(400).json({ success: false, message: 'No loan eligibility while an active loan is ongoing.' });
+        }
       }
+
+      user.name = name;
+      user.address = address;
+      user.aadharDoc = aadharDoc || user.aadharDoc;
+      user.panDoc = panDoc || user.panDoc;
+      user.upiId = upiId;
+
+      const loanAmount = Math.min(Number(requestedAmount) || 2000, user.maxLoanLimit);
+
+      const newLoan = await Loan.create({
+        userId: user._id,
+        mobile,
+        name,
+        address,
+        guarantorMobile,
+        requestedAmount: loanAmount,
+        totalAmountDue: loanAmount,
+        returnDueDate: new Date(returnDueDate),
+        upiId,
+        clientSignature
+      });
+
+      user.activeLoanId = newLoan._id;
+      await user.save();
+
+      return res.json({ success: true, loan: newLoan, user });
+    } else {
+      // Fallback In-Memory Loan Request
+      let user = memUsers.get(mobile);
+      if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+      if (user.activeLoanId) {
+        const existingLoan = memLoans.get(user.activeLoanId);
+        if (existingLoan && (existingLoan.status === 'PENDING' || existingLoan.status === 'APPROVED')) {
+          return res.status(400).json({ success: false, message: 'No loan eligibility while an active loan is ongoing.' });
+        }
+      }
+
+      user.name = name;
+      user.address = address;
+      user.upiId = upiId;
+
+      const loanId = 'loan_' + Date.now();
+      const loanAmount = Math.min(Number(requestedAmount) || 2000, user.maxLoanLimit);
+
+      const newLoan = {
+        _id: loanId,
+        userId: user._id,
+        mobile,
+        name,
+        address,
+        guarantorMobile,
+        requestedAmount: loanAmount,
+        totalAmountDue: loanAmount,
+        returnDueDate,
+        upiId,
+        clientSignature,
+        financerSignature: '',
+        status: 'PENDING',
+        requestDate: new Date()
+      };
+
+      memLoans.set(loanId, newLoan);
+      user.activeLoanId = loanId;
+      memUsers.set(mobile, user);
+
+      return res.json({ success: true, loan: newLoan, user });
     }
-
-    // Update User Profile basics
-    user.name = name;
-    user.address = address;
-    user.aadharDoc = aadharDoc || user.aadharDoc;
-    user.panDoc = panDoc || user.panDoc;
-    user.upiId = upiId;
-
-    const loanAmount = Math.min(requestedAmount || 2000, user.maxLoanLimit);
-
-    const newLoan = await Loan.create({
-      userId: user._id,
-      mobile,
-      name,
-      address,
-      guarantorMobile,
-      requestedAmount: loanAmount,
-      totalAmountDue: loanAmount,
-      returnDueDate: new Date(returnDueDate),
-      upiId,
-      clientSignature
-    });
-
-    user.activeLoanId = newLoan._id;
-    await user.save();
-
-    res.json({ success: true, loan: newLoan, user });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -143,8 +213,14 @@ app.post('/api/financer/applications', async (req, res) => {
     if (code !== 'Paisa25') {
       return res.status(401).json({ success: false, message: 'Invalid Access Code' });
     }
-    const loans = await Loan.find().sort({ requestDate: -1 });
-    res.json({ success: true, loans });
+
+    if (isMongoConnected) {
+      const loans = await Loan.find().sort({ requestDate: -1 });
+      return res.json({ success: true, loans });
+    } else {
+      const loans = Array.from(memLoans.values()).reverse();
+      return res.json({ success: true, loans });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -158,24 +234,40 @@ app.post('/api/financer/action', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid Access Code' });
     }
 
-    const loan = await Loan.findById(loanId);
-    if (!loan) return res.status(404).json({ success: false, message: 'Loan request not found' });
+    if (isMongoConnected) {
+      const loan = await Loan.findById(loanId);
+      if (!loan) return res.status(404).json({ success: false, message: 'Loan request not found' });
 
-    if (action === 'APPROVE') {
-      if (!financerSignature) {
-        return res.status(400).json({ success: false, message: 'Financer signature is required to approve.' });
+      if (action === 'APPROVE') {
+        if (!financerSignature) {
+          return res.status(400).json({ success: false, message: 'Financer signature is required to approve.' });
+        }
+        loan.status = 'APPROVED';
+        loan.financerSignature = financerSignature;
+      } else if (action === 'REJECT') {
+        loan.status = 'REJECTED';
+        loan.financerSignature = financerSignature || '';
+        await User.findByIdAndUpdate(loan.userId, { activeLoanId: null });
       }
-      loan.status = 'APPROVED';
-      loan.financerSignature = financerSignature;
-    } else if (action === 'REJECT') {
-      loan.status = 'REJECTED';
-      loan.financerSignature = financerSignature || '';
-      // Release user active loan hold
-      await User.findByIdAndUpdate(loan.userId, { activeLoanId: null });
-    }
 
-    await loan.save();
-    res.json({ success: true, loan });
+      await loan.save();
+      return res.json({ success: true, loan });
+    } else {
+      const loan = memLoans.get(loanId);
+      if (!loan) return res.status(404).json({ success: false, message: 'Loan request not found' });
+
+      if (action === 'APPROVE') {
+        loan.status = 'APPROVED';
+        loan.financerSignature = financerSignature;
+      } else if (action === 'REJECT') {
+        loan.status = 'REJECTED';
+        loan.financerSignature = financerSignature || '';
+        const user = memUsers.get(loan.mobile);
+        if (user) { user.activeLoanId = null; memUsers.set(loan.mobile, user); }
+      }
+      memLoans.set(loanId, loan);
+      return res.json({ success: true, loan });
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -185,32 +277,43 @@ app.post('/api/financer/action', async (req, res) => {
 app.post('/api/loan/repay', async (req, res) => {
   try {
     const { loanId } = req.body;
-    const loan = await Loan.findById(loanId);
-    if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
 
-    const user = await User.findById(loan.userId);
-    const today = new Date();
-    const dueDate = new Date(loan.returnDueDate);
+    if (isMongoConnected) {
+      const loan = await Loan.findById(loanId);
+      if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
 
-    // Calculate if paid on time (before or on Day 30)
-    const isPastDue = today > dueDate;
+      const user = await User.findById(loan.userId);
+      const today = new Date();
+      const dueDate = new Date(loan.returnDueDate);
+      const isPastDue = today > dueDate;
 
-    if (!isPastDue) {
-      // Paid on time: Increase LeLe Civil Score & Increase Loan Limit by 25%
+      if (!isPastDue) {
+        user.leleCivilScore = Math.min(900, user.leleCivilScore + 35);
+        user.maxLoanLimit = Math.round(user.maxLoanLimit * 1.25);
+      } else {
+        user.leleCivilScore = Math.max(300, user.leleCivilScore - 75);
+      }
+
+      loan.status = 'PAID';
+      user.activeLoanId = null;
+
+      await loan.save();
+      await user.save();
+      return res.json({ success: true, user, loan });
+    } else {
+      const loan = memLoans.get(loanId);
+      if (!loan) return res.status(404).json({ success: false, message: 'Loan not found' });
+
+      const user = memUsers.get(loan.mobile);
       user.leleCivilScore = Math.min(900, user.leleCivilScore + 35);
       user.maxLoanLimit = Math.round(user.maxLoanLimit * 1.25);
-    } else {
-      // Defaulter / Overdue: Reduce LeLe Civil Score
-      user.leleCivilScore = Math.max(300, user.leleCivilScore - 75);
+      user.activeLoanId = null;
+      loan.status = 'PAID';
+
+      memUsers.set(user.mobile, user);
+      memLoans.set(loanId, loan);
+      return res.json({ success: true, user, loan });
     }
-
-    loan.status = 'PAID';
-    user.activeLoanId = null;
-
-    await loan.save();
-    await user.save();
-
-    res.json({ success: true, user, loan });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -235,8 +338,8 @@ app.get('*', (req, res) => {
   <style>
     body { font-family: 'Rajdhani', sans-serif; background: #030712; color: #f3f4f6; overflow-x: hidden; }
     .font-orbitron { font-family: 'Orbitron', sans-serif; }
-    .glass-card { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
-    .glass-card-gold { background: rgba(20, 16, 5, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(234, 179, 8, 0.3); box-shadow: 0 0 30px rgba(234, 179, 8, 0.15); }
+    .glass-card { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
+    .glass-card-gold { background: rgba(20, 16, 5, 0.9); backdrop-filter: blur(16px); border: 1px solid rgba(234, 179, 8, 0.3); box-shadow: 0 0 30px rgba(234, 179, 8, 0.15); }
     canvas#bgCanvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
   </style>
 </head>
@@ -431,9 +534,14 @@ app.get('*', (req, res) => {
       const ctx = canvas.getContext('2d');
       let drawing = false;
 
-      canvas.addEventListener('mousedown', () => drawing = true);
+      canvas.addEventListener('mousedown', (e) => { drawing = true; draw(e); });
       canvas.addEventListener('mouseup', () => { drawing = false; ctx.beginPath(); });
       canvas.addEventListener('mousemove', draw);
+
+      // Touch support for mobiles
+      canvas.addEventListener('touchstart', (e) => { drawing = true; draw(e.touches[0]); e.preventDefault(); });
+      canvas.addEventListener('touchend', () => { drawing = false; ctx.beginPath(); });
+      canvas.addEventListener('touchmove', (e) => { draw(e.touches[0]); e.preventDefault(); });
 
       function draw(e) {
         if(!drawing) return;
@@ -460,20 +568,29 @@ app.get('*', (req, res) => {
     let currentLoan = null;
 
     async function loginUser() {
-      const mobile = document.getElementById('loginMobile').value;
-      if (!mobile) return alert('Enter mobile number');
+      const mobile = document.getElementById('loginMobile').value.trim();
+      if (!mobile || mobile.length < 10) {
+        alert('Please enter a valid 10-digit mobile number.');
+        return;
+      }
 
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile })
-      });
-      const data = await res.json();
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile })
+        });
+        const data = await res.json();
 
-      if (data.success) {
-        currentUser = data.user;
-        currentLoan = data.activeLoan;
-        renderDashboard();
+        if (data.success) {
+          currentUser = data.user;
+          currentLoan = data.activeLoan;
+          renderDashboard();
+        } else {
+          alert(data.message || 'Login failed');
+        }
+      } catch (err) {
+        alert('Network or server connection error: ' + err.message);
       }
     }
 
