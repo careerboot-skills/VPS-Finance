@@ -21,6 +21,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || 'le_le_finance_super_secret_jwt_key_2026';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lele_finance';
+const DEFAULT_FINANCER_UPI = 'paras5769@naviaxis';
 
 // Middleware Setup
 app.use(express.json({ limit: '10mb' }));
@@ -181,7 +182,7 @@ app.get('/api/client/profile', authenticateToken, async (req, res) => {
             activeLoan, 
             repaymentDetails,
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : 'lelefinance@upi'
+            financerUpiId: upiSetting ? upiSetting.value : DEFAULT_FINANCER_UPI
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -280,7 +281,7 @@ app.post('/api/financer/verify', async (req, res) => {
             success: true, 
             message: 'Financer portal unlocked successfully.', 
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : ''
+            financerUpiId: upiSetting ? upiSetting.value : DEFAULT_FINANCER_UPI
         });
     } else {
         res.status(401).json({ error: 'Incorrect Passcode! Access Denied.' });
@@ -292,13 +293,12 @@ app.post('/api/financer/update-payment-config', upload.single('qrImage'), async 
     try {
         const { financerUpiId } = req.body;
 
-        if (financerUpiId) {
-            await Settings.findOneAndUpdate(
-                { key: 'financer_upi' },
-                { value: financerUpiId },
-                { upsert: true, new: true }
-            );
-        }
+        const targetUpi = financerUpiId && financerUpiId.trim() !== '' ? financerUpiId.trim() : DEFAULT_FINANCER_UPI;
+        await Settings.findOneAndUpdate(
+            { key: 'financer_upi' },
+            { value: targetUpi },
+            { upsert: true, new: true }
+        );
 
         let qrUrl = null;
         if (req.file) {
@@ -310,7 +310,7 @@ app.post('/api/financer/update-payment-config', upload.single('qrImage'), async 
             );
         }
 
-        res.json({ message: 'Financer payment configurations updated successfully.', qrCodeUrl: qrUrl });
+        res.json({ message: 'Financer payment configurations updated successfully.', qrCodeUrl: qrUrl, financerUpiId: targetUpi });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -337,7 +337,7 @@ app.post('/api/financer/loans', async (req, res) => {
         res.json({ 
             loans: formattedLoans, 
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : 'lelefinance@upi'
+            financerUpiId: upiSetting ? upiSetting.value : DEFAULT_FINANCER_UPI
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -812,7 +812,7 @@ app.get('*', (req, res) => {
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                         <div class="space-y-3">
                             <label class="block text-xs font-bold uppercase text-gray-400">Financer Merchant UPI ID</label>
-                            <input type="text" id="financerUpiInput" placeholder="lelefinance@upi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-white text-sm outline-none focus:border-amber-400">
+                            <input type="text" id="financerUpiInput" value="paras5769@naviaxis" placeholder="paras5769@naviaxis" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-white text-sm outline-none focus:border-amber-400">
                         </div>
                         <div class="space-y-3">
                             <label class="block text-xs font-bold uppercase text-gray-400">Upload New Repayment QR Image</label>
@@ -888,7 +888,7 @@ app.get('*', (req, res) => {
             let currentActiveLoan = null;
             let currentRepaymentDetails = null;
             let currentQrCodeUrl = '';
-            let currentFinancerUpi = 'lelefinance@upi';
+            let currentFinancerUpi = 'paras5769@naviaxis';
             let financerCode = '';
             let pendingApprovalLoanId = null;
 
@@ -1031,7 +1031,7 @@ app.get('*', (req, res) => {
                         currentActiveLoan = data.activeLoan;
                         currentRepaymentDetails = data.repaymentDetails;
                         currentQrCodeUrl = data.qrCodeUrl;
-                        currentFinancerUpi = data.financerUpiId || 'lelefinance@upi';
+                        currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
 
                         renderActiveLoanUI();
                     } else {
@@ -1042,8 +1042,13 @@ app.get('*', (req, res) => {
                 }
             }
 
-            function generateUpiDeepLink(upiId, amount, note = "LeLe Loan Repayment") {
-                return \`upi://pay?pa=\${encodeURIComponent(upiId)}&pn=LeLe%20Finance&am=\${amount}&cu=INR&tn=\${encodeURIComponent(note)}\`;
+            function generateUpiDeepLink(upiId, amount, note) {
+                const cleanUpi = encodeURIComponent(upiId.trim());
+                const cleanAmount = parseFloat(amount).toFixed(2);
+                const payeeName = encodeURIComponent("LeLe Finance");
+                const txnNote = encodeURIComponent(note);
+                // Standard UPI Intent URI specification
+                return \`upi://pay?pa=\${cleanUpi}&pn=\${payeeName}&am=\${cleanAmount}&cu=INR&tn=\${txnNote}\`;
             }
 
             function renderActiveLoanUI() {
@@ -1067,8 +1072,8 @@ app.get('*', (req, res) => {
                     document.getElementById('loanReturnDate').innerText = new Date(currentActiveLoan.returnDate).toLocaleDateString();
                     document.getElementById('loanUpi').innerText = currentActiveLoan.upiId;
 
-                    // Setup UPI App Redirection Deep Link
-                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, \`Repay Loan \${currentActiveLoan._id}\`);
+                    // Setup Robust UPI Deep Link with exact params
+                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, \`Repay Loan ID \${currentActiveLoan._id}\`);
                     document.getElementById('directUpiDeepLink').href = deepLink;
                     document.getElementById('modalUpiDeepLink').href = deepLink;
 
@@ -1204,7 +1209,7 @@ app.get('*', (req, res) => {
                     if (res.ok) {
                         financerCode = code;
                         currentQrCodeUrl = data.qrCodeUrl || '';
-                        currentFinancerUpi = data.financerUpiId || '';
+                        currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
                         document.getElementById('financerUpiInput').value = currentFinancerUpi;
                         closeFinancerModal();
                         document.getElementById('financerPortalModal').classList.remove('hidden');
@@ -1239,7 +1244,7 @@ app.get('*', (req, res) => {
                     const data = await res.json();
                     if (res.ok) {
                         if (data.qrCodeUrl) currentQrCodeUrl = data.qrCodeUrl;
-                        currentFinancerUpi = upiInput;
+                        currentFinancerUpi = data.financerUpiId || upiInput;
                         showToast(data.message, "Configs Saved");
                     } else {
                         showToast(data.error, "Update Failed");
@@ -1259,7 +1264,7 @@ app.get('*', (req, res) => {
                     const data = await res.json();
                     const loans = data.loans;
                     currentQrCodeUrl = data.qrCodeUrl || '';
-                    currentFinancerUpi = data.financerUpiId || '';
+                    currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
                     document.getElementById('financerUpiInput').value = currentFinancerUpi;
 
                     const container = document.getElementById('financerLoanList');
