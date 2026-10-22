@@ -42,10 +42,10 @@ const upload = multer({
     storage: storage,
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB file limit
     fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf') {
+        if (file.mimetype === 'application/pdf' || file.mimetype.startsWith('image/')) {
             cb(null, true);
         } else {
-            cb(new Error('Only PDF files are allowed!'), false);
+            cb(new Error('Only PDF and Image files are allowed!'), false);
         }
     }
 });
@@ -68,6 +68,11 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+const SettingsSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    value: { type: String, required: true }
+});
+
 const LoanSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     clientMobile: { type: String, required: true },
@@ -81,17 +86,19 @@ const LoanSchema = new mongoose.Schema({
     panPdfUrl: { type: String, required: true },
     clientSignature: { type: String, required: true }, // Base64 string
     
-    // Status tracking: 'PENDING', 'APPROVED', 'REJECTED', 'PAID'
+    // Status tracking: 'PENDING', 'APPROVED', 'REJECTED', 'PAYMENT_VERIFICATION_PENDING', 'PAID'
     status: { type: String, default: 'PENDING' },
     financerSignature: { type: String, default: '' },
     approvalDate: { type: Date },
     rejectionReason: { type: String, default: '' },
+    paymentScreenshotUrl: { type: String, default: '' },
     penaltyInterest: { type: Number, default: 0 },
     
     createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
+const Settings = mongoose.model('Settings', SettingsSchema);
 const Loan = mongoose.model('Loan', LoanSchema);
 
 // Auth Middleware
@@ -129,12 +136,13 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-// Fetch Current Client Profile
+// Fetch Current Client Profile & Active QR Setting
 app.get('/api/client/profile', authenticateToken, async (req, res) => {
     try {
         const user = await User.findById(req.user.userId);
-        const activeLoan = await Loan.findOne({ userId: req.user.userId, status: { $in: ['PENDING', 'APPROVED'] } });
-        res.json({ user, activeLoan });
+        const activeLoan = await Loan.findOne({ userId: req.user.userId, status: { $in: ['PENDING', 'APPROVED', 'PAYMENT_VERIFICATION_PENDING'] } });
+        const qrSetting = await Settings.findOne({ key: 'repay_qr' });
+        res.json({ user, activeLoan, qrCodeUrl: qrSetting ? qrSetting.value : '' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -155,12 +163,11 @@ app.post('/api/loans/apply', authenticateToken, upload.fields([
             return res.status(400).json({ error: "Loan service is strictly restricted to Retail Stores located in Lucknow. Please provide a valid Lucknow store location." });
         }
 
-        // Validation Checks
         if (guarantorMobile === clientMobile) {
             return res.status(400).json({ error: "Guarantor mobile number cannot be the same as client's number." });
         }
 
-        const activeLoan = await Loan.findOne({ userId, status: { $in: ['PENDING', 'APPROVED'] } });
+        const activeLoan = await Loan.findOne({ userId, status: { $in: ['PENDING', 'APPROVED', 'PAYMENT_VERIFICATION_PENDING'] } });
         if (activeLoan) {
             return res.status(400).json({ error: "You already have an active or pending loan. New applications are locked until completion." });
         }
@@ -175,7 +182,6 @@ app.post('/api/loans/apply', authenticateToken, upload.fields([
             return res.status(400).json({ error: "Both Aadhar and PAN PDF documents are strictly required." });
         }
 
-        // Update basic profile details
         user.name = name;
         user.address = address;
         await user.save();
@@ -201,13 +207,55 @@ app.post('/api/loans/apply', authenticateToken, upload.fields([
     }
 });
 
+// Client Submit Repayment Screenshot for Verification
+app.post('/api/loans/submit-repay', authenticateToken, upload.single('paymentScreenshot'), async (req, res) => {
+    try {
+        const { loanId } = req.body;
+        const loan = await Loan.findById(loanId);
+        if (!loan || loan.status !== 'APPROVED') {
+            return res.status(400).json({ error: 'Invalid active loan for repayment.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'Payment screenshot upload is required.' });
+        }
+
+        loan.paymentScreenshotUrl = `/uploads/${req.file.filename}`;
+        loan.status = 'PAYMENT_VERIFICATION_PENDING';
+        await loan.save();
+
+        res.json({ message: 'Payment verification under process. Your repayment will be verified within 2-5 hrs.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Financer: Verify Passcode Access
-app.post('/api/financer/verify', (req, res) => {
+app.post('/api/financer/verify', async (req, res) => {
     const { code } = req.body;
     if (code === 'Paisa25') {
-        res.json({ success: true, message: 'Financer portal unlocked successfully.' });
+        const qrSetting = await Settings.findOne({ key: 'repay_qr' });
+        res.json({ success: true, message: 'Financer portal unlocked successfully.', qrCodeUrl: qrSetting ? qrSetting.value : '' });
     } else {
         res.status(401).json({ error: 'Incorrect Passcode! Access Denied.' });
+    }
+});
+
+// Financer: Upload / Update Repayment QR Code
+app.post('/api/financer/update-qr', upload.single('qrImage'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'QR image file is required.' });
+        }
+        const qrUrl = `/uploads/${req.file.filename}`;
+        await Settings.findOneAndUpdate(
+            { key: 'repay_qr' },
+            { value: qrUrl },
+            { upsert: true, new: true }
+        );
+        res.json({ message: 'Repayment QR code updated successfully.', qrCodeUrl: qrUrl });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -218,13 +266,14 @@ app.post('/api/financer/loans', async (req, res) => {
 
     try {
         const loans = await Loan.find().populate('userId').sort({ createdAt: -1 });
-        res.json(loans);
+        const qrSetting = await Settings.findOne({ key: 'repay_qr' });
+        res.json({ loans, qrCodeUrl: qrSetting ? qrSetting.value : '' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Financer: Approve or Reject Loan
+// Financer: Approve or Reject Loan OR Verify Repayment
 app.post('/api/financer/decision', async (req, res) => {
     const { code, loanId, decision, financerSignature, customLimit } = req.body;
     if (code !== 'Paisa25') return res.status(403).json({ error: 'Unauthorized.' });
@@ -233,6 +282,8 @@ app.post('/api/financer/decision', async (req, res) => {
         const loan = await Loan.findById(loanId);
         if (!loan) return res.status(404).json({ error: 'Loan request not found.' });
 
+        const user = await User.findById(loan.userId);
+
         if (decision === 'APPROVE') {
             if (!financerSignature) return res.status(400).json({ error: 'Financer signature is mandatory for loan approval.' });
             loan.status = 'APPROVED';
@@ -240,9 +291,6 @@ app.post('/api/financer/decision', async (req, res) => {
             loan.approvalDate = new Date();
         } else if (decision === 'REJECT') {
             loan.status = 'REJECTED';
-            
-            // Defaulter / Rejection penalty impact on LeLe Civil Score
-            const user = await User.findById(loan.userId);
             if (user) {
                 user.civilScore = Math.max(300, user.civilScore - 50);
                 if (customLimit !== undefined) {
@@ -250,58 +298,38 @@ app.post('/api/financer/decision', async (req, res) => {
                 }
                 await user.save();
             }
+        } else if (decision === 'VERIFY_PAYMENT') {
+            // Financer confirms the repayment screenshot is valid
+            const today = new Date();
+            const createdDate = new Date(loan.createdAt);
+            const diffTime = Math.abs(today - createdDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            let latePenaltyInterest = 0;
+            let isLate = false;
+
+            if (diffDays > 30) {
+                isLate = true;
+                const overdueDays = diffDays - 30;
+                latePenaltyInterest = loan.requestedAmount * (0.05 * overdueDays);
+            }
+
+            loan.status = 'PAID';
+            loan.penaltyInterest = latePenaltyInterest;
+
+            if (user) {
+                if (!isLate) {
+                    user.civilScore = Math.min(900, user.civilScore + 35);
+                    user.maxLimit = Math.round(user.maxLimit * 1.25);
+                } else {
+                    user.civilScore = Math.max(300, user.civilScore - 75);
+                }
+                await user.save();
+            }
         }
 
         await loan.save();
-        res.json({ message: `Loan successfully ${decision.toLowerCase()}d.`, loan });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Client/Financer: Repay Loan Endpoint (Calculates Interest & Upgrades Score)
-app.post('/api/loans/repay', authenticateToken, async (req, res) => {
-    try {
-        const { loanId } = req.body;
-        const loan = await Loan.findById(loanId);
-        if (!loan || loan.status !== 'APPROVED') return res.status(400).json({ error: 'Invalid active loan.' });
-
-        const user = await User.findById(loan.userId);
-        const today = new Date();
-        const createdDate = new Date(loan.createdAt);
-        const diffTime = Math.abs(today - createdDate);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-        let latePenaltyInterest = 0;
-        let isLate = false;
-
-        // Check 30-Day Rule
-        if (diffDays > 30) {
-            isLate = true;
-            const overdueDays = diffDays - 30;
-            // 5% interest per day overdue
-            latePenaltyInterest = loan.requestedAmount * (0.05 * overdueDays);
-        }
-
-        loan.status = 'PAID';
-        loan.penaltyInterest = latePenaltyInterest;
-        await loan.save();
-
-        if (!isLate) {
-            // Paid on time: Increase civil score and auto-increase limit by 25%
-            user.civilScore = Math.min(900, user.civilScore + 35);
-            user.maxLimit = Math.round(user.maxLimit * 1.25);
-        } else {
-            // Defaulter: Drop civil score
-            user.civilScore = Math.max(300, user.civilScore - 75);
-        }
-        await user.save();
-
-        res.json({ 
-            message: isLate ? `Loan Repaid with 5%/day overdue penalty.` : `Loan Repaid on time! Your credit limit increased by 25%!`,
-            civilScore: user.civilScore,
-            newLimit: user.maxLimit
-        });
+        res.json({ message: `Action successfully executed.`, loan });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -316,7 +344,6 @@ app.get('*', (req, res) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Le_Le Finance | Ultra-Premium Credit Platform</title>
-        <!-- Tailwind CSS, Lucide Icons, ThreeJS, html2pdf -->
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://unpkg.com/lucide@latest"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -346,7 +373,6 @@ app.get('*', (req, res) => {
                 pointer-events: none; 
             }
 
-            /* Financial Metallic Glassmorphism */
             .glass-card { 
                 background: linear-gradient(135deg, rgba(17, 24, 39, 0.75) 0%, rgba(10, 15, 29, 0.85) 100%); 
                 backdrop-filter: blur(20px); 
@@ -389,7 +415,6 @@ app.get('*', (req, res) => {
                 color: #fbbf24;
             }
 
-            /* Custom Styled Scrollbar */
             ::-webkit-scrollbar { width: 6px; }
             ::-webkit-scrollbar-track { background: #030712; }
             ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 10px; }
@@ -398,16 +423,17 @@ app.get('*', (req, res) => {
     </head>
     <body class="relative min-h-screen flex flex-col justify-between">
 
-        <!-- 4D Financial Grid & Geometric Background -->
         <canvas id="canvas4d"></canvas>
 
         <div class="relative z-10 flex flex-col min-h-screen">
             <!-- Header Nav -->
             <header class="glass-card sticky top-0 z-40 px-6 py-4 flex justify-between items-center border-b border-gray-800/80">
                 <div class="flex items-center gap-3.5">
-                    <!-- Clean L₹ Logo -->
-                    <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 flex items-center justify-center font-black text-2xl text-black shadow-lg shadow-amber-500/20 border border-amber-300/40 tracking-tighter">
-                        L₹
+                    <!-- Premium L₹ Logo Badge -->
+                    <div class="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-400 to-yellow-300 p-[1px] shadow-lg shadow-amber-500/20">
+                        <div class="w-full h-full bg-gray-950 rounded-[15px] flex items-center justify-center">
+                            <span class="font-black text-xl tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-amber-300 to-amber-500 font-['Space_Grotesk']">L₹</span>
+                        </div>
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
@@ -518,9 +544,15 @@ app.get('*', (req, res) => {
                         </div>
 
                         <div id="repaySection" class="hidden pt-2 flex justify-end">
-                            <button onclick="triggerRepayModal()" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-emerald-500/20 flex items-center gap-2">
-                                <i data-lucide="check-circle" class="w-4 h-4"></i> Liquidate & Repay Loan
+                            <button onclick="openRepaymentModal()" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-emerald-500/20 flex items-center gap-2">
+                                <i data-lucide="qrcode" class="w-4 h-4"></i> Pay via UPI QR Code
                             </button>
+                        </div>
+
+                        <!-- Verification Notice Banner -->
+                        <div id="verificationNotice" class="hidden p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-1">
+                            <p class="text-xs font-bold text-amber-300 uppercase tracking-wider">Payment Verification Under Process</p>
+                            <p class="text-[11px] text-gray-400">Your repayment screenshot has been received and will be verified by the financer within 2-5 hrs.</p>
                         </div>
                     </div>
 
@@ -605,6 +637,20 @@ app.get('*', (req, res) => {
                             </button>
                         </form>
                     </div>
+
+                    <!-- Dedicated Terms & Conditions Section -->
+                    <div class="glass-card p-6 sm:p-8 rounded-3xl space-y-4 border border-gray-800">
+                        <h4 class="text-base font-bold text-white font-['Space_Grotesk'] flex items-center gap-2">
+                            <i data-lucide="file-text" class="w-4 h-4 text-amber-400"></i> Terms & Conditions
+                        </h4>
+                        <ul class="text-xs text-gray-400 space-y-2 list-disc pl-4 leading-relaxed">
+                            <li><strong>Interest-Free Tenure:</strong> Borrowers can borrow up to ₹2,000 completely interest-free for the first 30 days from disbursement.</li>
+                            <li><strong>Late Penalty Covenant:</strong> If repayment is not completed on or before the 30th day, a daily penalty interest of 5% on the principal amount will be charged until full liquidation.</li>
+                            <li><strong>Credit Standing Upgrades:</strong> Successful on-time repayments automatically enhance the LeLe Civil Score and increase borrowing limits by 25%.</li>
+                            <li><strong>Default Ramifications:</strong> Defaulters will experience negative adjustments to their LeLe Civil Score, and future borrowing limits will be at the sole discretion of the authorized financer.</li>
+                            <li><strong>Geographic Eligibility:</strong> Credit facilities are strictly restricted to retail store personnel located within Lucknow.</li>
+                        </ul>
+                    </div>
                 </div>
 
             </main>
@@ -615,10 +661,34 @@ app.get('*', (req, res) => {
             </footer>
         </div>
 
-        <!-- Custom Dark/Gold Glassmorphic Notification Toast -->
+        <!-- Repayment Modal with Dynamic QR Code & Screenshot Upload -->
+        <div id="repaymentModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-8 rounded-3xl max-w-md w-full space-y-6 border border-amber-500/40 shadow-2xl text-center">
+                <div class="space-y-1">
+                    <h3 class="text-xl font-bold text-white font-['Space_Grotesk']">Scan & Pay via UPI QR</h3>
+                    <p class="text-xs text-gray-400">Scan code with any UPI app to make your repayment.</p>
+                </div>
+
+                <div class="bg-gray-950 p-4 rounded-2xl border border-gray-800 inline-block mx-auto">
+                    <img id="displayRepayQr" src="" alt="Repayment QR Code" class="w-48 h-48 object-contain mx-auto rounded-xl">
+                </div>
+
+                <div class="space-y-3 text-left">
+                    <label class="block text-xs font-bold uppercase text-amber-400">Upload Payment Screenshot</label>
+                    <input type="file" id="repayScreenshot" accept="image/*" class="w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500/10 file:text-amber-300 hover:file:bg-amber-500/20 cursor-pointer">
+                </div>
+
+                <div class="flex gap-3">
+                    <button onclick="closeRepaymentModal()" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
+                    <button onclick="submitRepaymentVerification()" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase tracking-wider">Verify My Payment</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Notification Toast -->
         <div id="customToast" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
             <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
-                <div id="toastIcon" class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
                     <i data-lucide="info" class="w-6 h-6"></i>
                 </div>
                 <div class="space-y-1.5">
@@ -626,41 +696,6 @@ app.get('*', (req, res) => {
                     <p id="toastMessage" class="text-xs text-gray-300 leading-relaxed"></p>
                 </div>
                 <button onclick="closeToast()" class="w-full py-3 rounded-xl btn-gold text-xs uppercase tracking-wider">OK</button>
-            </div>
-        </div>
-
-        <!-- Custom Dark/Gold Glassmorphic Confirmation Modal -->
-        <div id="customConfirmModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
-            <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
-                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
-                    <i data-lucide="help-circle" class="w-6 h-6"></i>
-                </div>
-                <div class="space-y-1.5">
-                    <h4 id="confirmTitle" class="text-lg font-bold text-white font-['Space_Grotesk']">Confirm Action</h4>
-                    <p id="confirmMessage" class="text-xs text-gray-300 leading-relaxed"></p>
-                </div>
-                <div class="flex gap-3">
-                    <button id="confirmCancelBtn" onclick="closeConfirmModal(false)" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
-                    <button id="confirmOkBtn" onclick="closeConfirmModal(true)" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase">Confirm</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Custom Dark/Gold Glassmorphic Input Prompt Modal -->
-        <div id="customPromptModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
-            <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
-                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
-                    <i data-lucide="edit-3" class="w-6 h-6"></i>
-                </div>
-                <div class="space-y-1.5">
-                    <h4 id="promptTitle" class="text-lg font-bold text-white font-['Space_Grotesk']">Input Required</h4>
-                    <p id="promptMessage" class="text-xs text-gray-300 leading-relaxed"></p>
-                </div>
-                <input type="number" id="promptInputVal" placeholder="Enter value" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-center text-white text-sm outline-none focus:border-amber-400">
-                <div class="flex gap-3">
-                    <button onclick="closePromptModal(null)" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
-                    <button onclick="closePromptModal(document.getElementById('promptInputVal').value)" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase">Submit</button>
-                </div>
             </div>
         </div>
 
@@ -692,12 +727,24 @@ app.get('*', (req, res) => {
                         </div>
                         <div>
                             <h2 class="text-lg font-bold text-white font-['Space_Grotesk']">Financer Control Center</h2>
-                            <p class="text-xs text-amber-400 font-medium">Secret Access Active • Client Underwriting Requests</p>
+                            <p class="text-xs text-amber-400 font-medium">Secret Access Active • Client Underwriting & QR Management</p>
                         </div>
                     </div>
                     <button onclick="closeFinancerPortal()" class="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold hover:bg-red-500/20 transition">
                         Exit Portal
                     </button>
+                </div>
+
+                <!-- QR Code Manager Widget -->
+                <div class="glass-card p-6 rounded-3xl space-y-4 border border-amber-500/30">
+                    <h3 class="text-base font-bold text-white font-['Space_Grotesk']">Manage Repayment UPI QR Code</h3>
+                    <div class="flex flex-col sm:flex-row items-center gap-6">
+                        <img id="currentFinancerQr" src="" alt="Current QR" class="w-32 h-32 object-contain bg-gray-950 p-2 rounded-xl border border-gray-800">
+                        <div class="space-y-3 w-full">
+                            <input type="file" id="newQrFile" accept="image/*" class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500/10 file:text-amber-300 hover:file:bg-amber-500/20 cursor-pointer">
+                            <button onclick="uploadNewQrCode()" class="px-5 py-2.5 rounded-xl btn-gold text-xs uppercase tracking-wider">Update Repayment QR</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="financerLoanList" class="space-y-4"></div>
@@ -724,7 +771,7 @@ app.get('*', (req, res) => {
             </div>
         </div>
 
-        <!-- Hidden PDF Printable Agreement Container -->
+        <!-- Hidden PDF Printable Agreement Container (Contains T&C) -->
         <div id="pdfTemplate" class="hidden bg-white text-black p-10 space-y-6 text-sm font-serif">
             <div class="text-center border-b-2 border-black pb-4">
                 <h1 class="text-2xl font-bold uppercase tracking-wider">Le_Le Finance Legal Loan Agreement</h1>
@@ -745,7 +792,8 @@ app.get('*', (req, res) => {
                 <p><strong>Allocated Principal Amount:</strong> ₹<span id="pdfAmount"></span></p>
                 <p><strong>Interest Standard:</strong> 0% Interest for first 30 Days.</p>
                 <p><strong>Scheduled Return Date:</strong> <span id="pdfReturnDate"></span></p>
-                <p><strong>Default Term:</strong> Failure to pay within 30 days incurs a daily late fee of 5% until the full balance is cleared.</p>
+                <p><strong>Default Penalty Term:</strong> Failure to pay within 30 days incurs a daily late fee of 5% until the full balance is cleared.</p>
+                <p><strong>Credit Upgrades:</strong> On-time repayments automatically boost Civil Score and increase borrowing limit by 25%.</p>
             </div>
 
             <div class="grid grid-cols-2 gap-8 pt-8">
@@ -763,13 +811,10 @@ app.get('*', (req, res) => {
         <script>
             let authToken = localStorage.getItem('lele_token') || '';
             let currentActiveLoan = null;
+            let currentQrCodeUrl = '';
             let financerCode = '';
             let pendingApprovalLoanId = null;
 
-            let confirmCallback = null;
-            let promptCallback = null;
-
-            // Styled Custom Notification Systems
             function showToast(message, title = "System Notification") {
                 document.getElementById('toastTitle').innerText = title;
                 document.getElementById('toastMessage').innerText = message;
@@ -778,37 +823,6 @@ app.get('*', (req, res) => {
 
             function closeToast() {
                 document.getElementById('customToast').classList.add('hidden');
-            }
-
-            function showConfirm(message, title, callback) {
-                document.getElementById('confirmTitle').innerText = title || "Confirm Action";
-                document.getElementById('confirmMessage').innerText = message;
-                confirmCallback = callback;
-                document.getElementById('customConfirmModal').classList.remove('hidden');
-            }
-
-            function closeConfirmModal(result) {
-                document.getElementById('customConfirmModal').classList.add('hidden');
-                if (confirmCallback) {
-                    confirmCallback(result);
-                    confirmCallback = null;
-                }
-            }
-
-            function showPrompt(message, defaultValue, callback) {
-                document.getElementById('promptTitle').innerText = "Adjust Credit Limit";
-                document.getElementById('promptMessage').innerText = message;
-                document.getElementById('promptInputVal').value = defaultValue || "1000";
-                promptCallback = callback;
-                document.getElementById('customPromptModal').classList.remove('hidden');
-            }
-
-            function closePromptModal(val) {
-                document.getElementById('customPromptModal').classList.add('hidden');
-                if (promptCallback) {
-                    promptCallback(val);
-                    promptCallback = null;
-                }
             }
 
             function initSignaturePad(canvasId) {
@@ -938,6 +952,7 @@ app.get('*', (req, res) => {
                         if (data.user.address) document.getElementById('clientAddress').value = data.user.address;
 
                         currentActiveLoan = data.activeLoan;
+                        currentQrCodeUrl = data.qrCodeUrl;
                         renderActiveLoanUI();
                     } else {
                         logout();
@@ -953,6 +968,7 @@ app.get('*', (req, res) => {
                 const formContainer = document.getElementById('applicationFormContainer');
                 const agreementBtn = document.getElementById('downloadAgreementBtn');
                 const repaySec = document.getElementById('repaySection');
+                const verificationNotice = document.getElementById('verificationNotice');
 
                 if (currentActiveLoan) {
                     activeContainer.classList.remove('hidden');
@@ -969,16 +985,67 @@ app.get('*', (req, res) => {
                         badge.innerText = "Application Under Review";
                         agreementBtn.classList.add('hidden');
                         repaySec.classList.add('hidden');
+                        verificationNotice.classList.add('hidden');
                     } else if (currentActiveLoan.status === 'APPROVED') {
                         badge.className = "px-3.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider";
                         badge.innerText = "Facility Active & Disbursed";
                         agreementBtn.classList.remove('hidden');
                         repaySec.classList.remove('hidden');
+                        verificationNotice.classList.add('hidden');
+                    } else if (currentActiveLoan.status === 'PAYMENT_VERIFICATION_PENDING') {
+                        badge.className = "px-3.5 py-1 rounded-full bg-yellow-500/10 text-yellow-300 border border-yellow-500/30 text-xs font-bold uppercase tracking-wider";
+                        badge.innerText = "Payment Verification Pending";
+                        agreementBtn.classList.remove('hidden');
+                        repaySec.classList.add('hidden');
+                        verificationNotice.classList.remove('hidden');
                     }
                 } else {
                     activeContainer.classList.add('hidden');
                     lockedNotice.classList.add('hidden');
                     formContainer.classList.remove('hidden');
+                }
+            }
+
+            function openRepaymentModal() {
+                if (!currentQrCodeUrl) {
+                    showToast("Financer has not uploaded a repayment QR code yet.", "QR Unavailable");
+                    return;
+                }
+                document.getElementById('displayRepayQr').src = currentQrCodeUrl;
+                document.getElementById('repaymentModal').classList.remove('hidden');
+            }
+
+            function closeRepaymentModal() {
+                document.getElementById('repaymentModal').classList.add('hidden');
+            }
+
+            async function submitRepaymentVerification() {
+                const fileInput = document.getElementById('repayScreenshot');
+                if (!fileInput.files[0]) {
+                    showToast("Please upload your payment screenshot before verification.", "Screenshot Required");
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('loanId', currentActiveLoan._id);
+                formData.append('paymentScreenshot', fileInput.files[0]);
+
+                try {
+                    const res = await fetch('/api/loans/submit-repay', {
+                        method: 'POST',
+                        headers: { 'Authorization': \`Bearer \${authToken}\` },
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        closeRepaymentModal();
+                        showToast(data.message, "Verification Submitted");
+                        loadDashboard();
+                    } else {
+                        showToast(data.error, "Submission Error");
+                    }
+                } catch (err) {
+                    showToast("Failed to upload payment screenshot.", "Error");
                 }
             }
 
@@ -1023,38 +1090,6 @@ app.get('*', (req, res) => {
                 }
             }
 
-            function triggerRepayModal() {
-                showConfirm("Confirm repayment of full loan amount back to Le_Le Finance?", "Repay Credit Facility", (confirmed) => {
-                    if (confirmed) {
-                        executeRepay();
-                    }
-                });
-            }
-
-            async function executeRepay() {
-                if (!currentActiveLoan) return;
-
-                try {
-                    const res = await fetch('/api/loans/repay', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': \`Bearer \${authToken}\`
-                        },
-                        body: JSON.stringify({ loanId: currentActiveLoan._id })
-                    });
-                    const data = await res.json();
-                    if (res.ok) {
-                        showToast(data.message, "Repayment Complete");
-                        loadDashboard();
-                    } else {
-                        showToast(data.error, "Repayment Failed");
-                    }
-                } catch (err) {
-                    showToast("Repayment processing error.", "Error");
-                }
-            }
-
             function openFinancerModal() {
                 document.getElementById('financerCodeModal').classList.remove('hidden');
             }
@@ -1073,6 +1108,10 @@ app.get('*', (req, res) => {
                     const data = await res.json();
                     if (res.ok) {
                         financerCode = code;
+                        currentQrCodeUrl = data.qrCodeUrl || '';
+                        if (currentQrCodeUrl) {
+                            document.getElementById('currentFinancerQr').src = currentQrCodeUrl;
+                        }
                         closeFinancerModal();
                         document.getElementById('financerPortalModal').classList.remove('hidden');
                         loadFinancerLoans();
@@ -1088,6 +1127,34 @@ app.get('*', (req, res) => {
                 document.getElementById('financerPortalModal').classList.add('hidden');
             }
 
+            async function uploadNewQrCode() {
+                const fileInput = document.getElementById('newQrFile');
+                if (!fileInput.files[0]) {
+                    showToast("Please select a QR image file.", "File Required");
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('qrImage', fileInput.files[0]);
+
+                try {
+                    const res = await fetch('/api/financer/update-qr', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        currentQrCodeUrl = data.qrCodeUrl;
+                        document.getElementById('currentFinancerQr').src = currentQrCodeUrl;
+                        showToast(data.message, "QR Updated");
+                    } else {
+                        showToast(data.error, "Update Failed");
+                    }
+                } catch (err) {
+                    showToast("Failed to upload QR code.", "Error");
+                }
+            }
+
             async function loadFinancerLoans() {
                 try {
                     const res = await fetch('/api/financer/loans', {
@@ -1095,7 +1162,12 @@ app.get('*', (req, res) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ code: financerCode })
                     });
-                    const loans = await res.json();
+                    const data = await res.json();
+                    const loans = data.loans;
+                    currentQrCodeUrl = data.qrCodeUrl || '';
+                    if (currentQrCodeUrl) {
+                        document.getElementById('currentFinancerQr').src = currentQrCodeUrl;
+                    }
 
                     const container = document.getElementById('financerLoanList');
                     container.innerHTML = '';
@@ -1110,7 +1182,7 @@ app.get('*', (req, res) => {
                                     <p class="text-xs text-gray-400 mt-0.5">Retail Store Address: \${loan.address}</p>
                                     <p class="text-xs text-amber-400 font-semibold mt-0.5">Guarantor Mobile: \${loan.guarantorMobile}</p>
                                 </div>
-                                <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider \${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">\${loan.status}</span>
+                                <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider \${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : loan.status === 'PAYMENT_VERIFICATION_PENDING' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">\${loan.status}</span>
                             </div>
 
                             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950/80 p-4 rounded-xl text-xs border border-gray-800/80">
@@ -1120,13 +1192,18 @@ app.get('*', (req, res) => {
                                 <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-emerald-400 font-bold text-sm">\${loan.userId ? loan.userId.civilScore : 750}</p></div>
                             </div>
 
-                            <div class="flex gap-4">
+                            <div class="flex flex-wrap gap-4 items-center">
                                 <a href="\${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
                                     <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View Aadhar PDF
                                 </a>
                                 <a href="\${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
                                     <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View PAN PDF
                                 </a>
+                                \${loan.paymentScreenshotUrl ? \`
+                                    <a href="\${loan.paymentScreenshotUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition flex items-center gap-1.5">
+                                        <i data-lucide="image" class="w-3.5 h-3.5 text-amber-400"></i> View Repayment Screenshot
+                                    </a>
+                                \` : ''}
                             </div>
 
                             \${loan.status === 'PENDING' ? \`
@@ -1134,8 +1211,16 @@ app.get('*', (req, res) => {
                                     <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
                                         Approve Facility
                                     </button>
-                                    <button onclick="triggerRejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
+                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
                                         Reject Facility
+                                    </button>
+                                </div>
+                            \` : ''}
+
+                            \${loan.status === 'PAYMENT_VERIFICATION_PENDING' ? \`
+                                <div class="flex gap-3 pt-2">
+                                    <button onclick="verifyPayment('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
+                                        Verify & Close Repayment
                                     </button>
                                 </div>
                             \` : ''}
@@ -1186,13 +1271,30 @@ app.get('*', (req, res) => {
                 }
             }
 
-            function triggerRejectLoan(loanId) {
-                showPrompt("Enter new adjusted credit limit for this rejected client:", "1000", (customLimit) => {
-                    executeReject(loanId, customLimit);
-                });
+            async function verifyPayment(loanId) {
+                try {
+                    const res = await fetch('/api/financer/decision', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            code: financerCode,
+                            loanId: loanId,
+                            decision: 'VERIFY_PAYMENT'
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        showToast("Payment verified successfully! Client civil score upgraded and limit increased.", "Repayment Verified");
+                        loadFinancerLoans();
+                    } else {
+                        showToast(data.error, "Verification Failed");
+                    }
+                } catch (err) {
+                    showToast("Verification error.", "Error");
+                }
             }
 
-            async function executeReject(loanId, customLimit) {
+            async function rejectLoan(loanId) {
                 try {
                     const res = await fetch('/api/financer/decision', {
                         method: 'POST',
@@ -1201,7 +1303,7 @@ app.get('*', (req, res) => {
                             code: financerCode,
                             loanId: loanId,
                             decision: 'REJECT',
-                            customLimit: customLimit ? parseFloat(customLimit) : 1000
+                            customLimit: 1000
                         })
                     });
                     const data = await res.json();
