@@ -18,7 +18,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || 'le_le_finance_super_secret_jwt_key_2026';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lele_finance';
 
@@ -101,7 +101,7 @@ const authenticateToken = (req, res, next) => {
     if (!token) return res.status(401).json({ error: 'Access denied. Token missing.' });
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ error: 'Invalid token.' });
+        if (err) return res.status(403).json({ error: 'Invalid or expired token.' });
         req.user = user;
         next();
     });
@@ -125,7 +125,7 @@ app.post('/api/auth/login', async (req, res) => {
         const token = jwt.sign({ userId: user._id, mobile: user.mobile }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ token, user });
     } catch (err) {
-        res.status(500).json({ error: 'Server Auth Error: ' + err.message });
+        res.status(500).json({ error: 'Database Auth Error: ' + err.message });
     }
 });
 
@@ -149,6 +149,11 @@ app.post('/api/loans/apply', authenticateToken, upload.fields([
         const { name, address, guarantorMobile, requestedAmount, returnDate, upiId, clientSignature } = req.body;
         const userId = req.user.userId;
         const clientMobile = req.user.mobile;
+
+        // Mandate Lucknow Location Requirement
+        if (!address || !address.toLowerCase().includes('lucknow')) {
+            return res.status(400).json({ error: "Loan service is strictly restricted to Retail Stores located in Lucknow. Please provide a valid Lucknow store location." });
+        }
 
         // Validation Checks
         if (guarantorMobile === clientMobile) {
@@ -400,14 +405,9 @@ app.get('*', (req, res) => {
             <!-- Header Nav -->
             <header class="glass-card sticky top-0 z-40 px-6 py-4 flex justify-between items-center border-b border-gray-800/80">
                 <div class="flex items-center gap-3.5">
-                    <!-- Custom L + ₹ Combination Logo -->
-                    <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20 border border-amber-300/40 p-1">
-                        <svg class="w-7 h-7 text-black fill-current" viewBox="0 0 100 100">
-                            <!-- L Stem integrated with Rupee horizontal bars -->
-                            <path d="M 22 18 L 38 18 L 38 72 L 78 72 L 78 86 L 22 86 Z" />
-                            <path d="M 38 32 L 72 32 L 72 42 L 38 42 Z" />
-                            <path d="M 38 48 L 68 48 L 68 58 L 38 58 Z" />
-                        </svg>
+                    <!-- Clean L₹ Logo -->
+                    <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 flex items-center justify-center font-black text-2xl text-black shadow-lg shadow-amber-500/20 border border-amber-300/40 tracking-tighter">
+                        L₹
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
@@ -518,7 +518,7 @@ app.get('*', (req, res) => {
                         </div>
 
                         <div id="repaySection" class="hidden pt-2 flex justify-end">
-                            <button onclick="repayLoan()" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-emerald-500/20 flex items-center gap-2">
+                            <button onclick="triggerRepayModal()" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-emerald-500/20 flex items-center gap-2">
                                 <i data-lucide="check-circle" class="w-4 h-4"></i> Liquidate & Repay Loan
                             </button>
                         </div>
@@ -537,7 +537,7 @@ app.get('*', (req, res) => {
                             <h3 class="text-xl font-bold text-white font-['Space_Grotesk'] flex items-center gap-2.5">
                                 <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i> Request Interest-Free Loan
                             </h3>
-                            <p class="text-xs text-gray-400 mt-1">Submit mandatory identity verification and return schedule to receive approved capital.</p>
+                            <p class="text-xs text-gray-400 mt-1">Submit mandatory identity verification and Lucknow Retail Store location to receive approved capital.</p>
                         </div>
 
                         <form id="loanForm" onsubmit="submitLoanApplication(event)" class="space-y-6">
@@ -553,8 +553,10 @@ app.get('*', (req, res) => {
                             </div>
 
                             <div>
-                                <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Residential Address</label>
-                                <textarea id="clientAddress" required rows="2" placeholder="Ashiyana, Lucknow, Uttar Pradesh" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none"></textarea>
+                                <label class="block text-xs font-bold uppercase tracking-wider text-amber-400 mb-2 flex items-center gap-1.5">
+                                    <i data-lucide="map-pin" class="w-3.5 h-3.5"></i> Address (Retail Store Location - Must Include "Lucknow")
+                                </label>
+                                <textarea id="clientAddress" required rows="2" placeholder="Spykar EBO, Phoenix Palassio Mall, Lucknow, Uttar Pradesh" class="w-full bg-gray-950/80 border border-amber-500/30 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none"></textarea>
                             </div>
 
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -613,6 +615,55 @@ app.get('*', (req, res) => {
             </footer>
         </div>
 
+        <!-- Custom Dark/Gold Glassmorphic Notification Toast -->
+        <div id="customToast" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
+                <div id="toastIcon" class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                    <i data-lucide="info" class="w-6 h-6"></i>
+                </div>
+                <div class="space-y-1.5">
+                    <h4 id="toastTitle" class="text-lg font-bold text-white font-['Space_Grotesk']">Notice</h4>
+                    <p id="toastMessage" class="text-xs text-gray-300 leading-relaxed"></p>
+                </div>
+                <button onclick="closeToast()" class="w-full py-3 rounded-xl btn-gold text-xs uppercase tracking-wider">OK</button>
+            </div>
+        </div>
+
+        <!-- Custom Dark/Gold Glassmorphic Confirmation Modal -->
+        <div id="customConfirmModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                    <i data-lucide="help-circle" class="w-6 h-6"></i>
+                </div>
+                <div class="space-y-1.5">
+                    <h4 id="confirmTitle" class="text-lg font-bold text-white font-['Space_Grotesk']">Confirm Action</h4>
+                    <p id="confirmMessage" class="text-xs text-gray-300 leading-relaxed"></p>
+                </div>
+                <div class="flex gap-3">
+                    <button id="confirmCancelBtn" onclick="closeConfirmModal(false)" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
+                    <button id="confirmOkBtn" onclick="closeConfirmModal(true)" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Dark/Gold Glassmorphic Input Prompt Modal -->
+        <div id="customPromptModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-6 sm:p-8 rounded-3xl max-w-sm w-full space-y-5 border border-amber-500/40 shadow-2xl text-center">
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                    <i data-lucide="edit-3" class="w-6 h-6"></i>
+                </div>
+                <div class="space-y-1.5">
+                    <h4 id="promptTitle" class="text-lg font-bold text-white font-['Space_Grotesk']">Input Required</h4>
+                    <p id="promptMessage" class="text-xs text-gray-300 leading-relaxed"></p>
+                </div>
+                <input type="number" id="promptInputVal" placeholder="Enter value" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-center text-white text-sm outline-none focus:border-amber-400">
+                <div class="flex gap-3">
+                    <button onclick="closePromptModal(null)" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
+                    <button onclick="closePromptModal(document.getElementById('promptInputVal').value)" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase">Submit</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Financer Unlocking Modal -->
         <div id="financerCodeModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
             <div class="glass-card p-8 rounded-3xl max-w-sm w-full space-y-6 border border-amber-500/40 shadow-2xl relative">
@@ -631,17 +682,13 @@ app.get('*', (req, res) => {
             </div>
         </div>
 
-        <!-- Financer Admin Portal View Screen -->
+        <!-- Financer Admin Portal Screen -->
         <div id="financerPortalModal" class="hidden fixed inset-0 z-50 glass-modal overflow-y-auto p-4 sm:p-8">
             <div class="max-w-6xl mx-auto space-y-6">
                 <div class="flex justify-between items-center glass-card p-6 rounded-3xl border border-amber-500/40">
                     <div class="flex items-center gap-3.5">
-                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 flex items-center justify-center text-black p-1">
-                            <svg class="w-6 h-6 fill-current" viewBox="0 0 100 100">
-                                <path d="M 22 18 L 38 18 L 38 72 L 78 72 L 78 86 L 22 86 Z" />
-                                <path d="M 38 32 L 72 32 L 72 42 L 38 42 Z" />
-                                <path d="M 38 48 L 68 48 L 68 58 L 38 58 Z" />
-                            </svg>
+                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 flex items-center justify-center font-black text-black text-xl">
+                            L₹
                         </div>
                         <div>
                             <h2 class="text-lg font-bold text-white font-['Space_Grotesk']">Financer Control Center</h2>
@@ -653,12 +700,11 @@ app.get('*', (req, res) => {
                     </button>
                 </div>
 
-                <!-- Loan Requests Grid -->
                 <div id="financerLoanList" class="space-y-4"></div>
             </div>
         </div>
 
-        <!-- Financer Approval Signature Modal -->
+        <!-- Financer Approval Modal -->
         <div id="approvalModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
             <div class="glass-card p-8 rounded-3xl max-w-lg w-full space-y-6 border border-amber-500/40">
                 <div class="space-y-1">
@@ -691,7 +737,7 @@ app.get('*', (req, res) => {
                 <div><strong>Borrower Name:</strong> <span id="pdfClientName"></span></div>
                 <div><strong>Borrower Mobile:</strong> <span id="pdfClientMobile"></span></div>
                 <div><strong>Guarantor Mobile:</strong> <span id="pdfGuarantor"></span></div>
-                <div><strong>Borrower Address:</strong> <span id="pdfAddress"></span></div>
+                <div><strong>Retail Store Address:</strong> <span id="pdfAddress"></span></div>
             </div>
 
             <div class="border p-4 bg-gray-50 rounded space-y-2">
@@ -714,14 +760,57 @@ app.get('*', (req, res) => {
             </div>
         </div>
 
-        <!-- JavaScript Logic -->
         <script>
             let authToken = localStorage.getItem('lele_token') || '';
             let currentActiveLoan = null;
             let financerCode = '';
             let pendingApprovalLoanId = null;
 
-            // Signature Pads
+            let confirmCallback = null;
+            let promptCallback = null;
+
+            // Styled Custom Notification Systems
+            function showToast(message, title = "System Notification") {
+                document.getElementById('toastTitle').innerText = title;
+                document.getElementById('toastMessage').innerText = message;
+                document.getElementById('customToast').classList.remove('hidden');
+            }
+
+            function closeToast() {
+                document.getElementById('customToast').classList.add('hidden');
+            }
+
+            function showConfirm(message, title, callback) {
+                document.getElementById('confirmTitle').innerText = title || "Confirm Action";
+                document.getElementById('confirmMessage').innerText = message;
+                confirmCallback = callback;
+                document.getElementById('customConfirmModal').classList.remove('hidden');
+            }
+
+            function closeConfirmModal(result) {
+                document.getElementById('customConfirmModal').classList.add('hidden');
+                if (confirmCallback) {
+                    confirmCallback(result);
+                    confirmCallback = null;
+                }
+            }
+
+            function showPrompt(message, defaultValue, callback) {
+                document.getElementById('promptTitle').innerText = "Adjust Credit Limit";
+                document.getElementById('promptMessage').innerText = message;
+                document.getElementById('promptInputVal').value = defaultValue || "1000";
+                promptCallback = callback;
+                document.getElementById('customPromptModal').classList.remove('hidden');
+            }
+
+            function closePromptModal(val) {
+                document.getElementById('customPromptModal').classList.add('hidden');
+                if (promptCallback) {
+                    promptCallback(val);
+                    promptCallback = null;
+                }
+            }
+
             function initSignaturePad(canvasId) {
                 const canvas = document.getElementById(canvasId);
                 const ctx = canvas.getContext('2d');
@@ -756,7 +845,6 @@ app.get('*', (req, res) => {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
 
-            // Init Three.js 4D Animated Financial Grid Background
             function init4DBackground() {
                 const canvas = document.getElementById('canvas4d');
                 const scene = new THREE.Scene();
@@ -766,13 +854,11 @@ app.get('*', (req, res) => {
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.setPixelRatio(window.devicePixelRatio);
 
-                // Create geometric hyper-mesh & floating particles
                 const geometry = new THREE.IcosahedronGeometry(12, 2);
                 const material = new THREE.MeshBasicMaterial({ color: 0xd97706, wireframe: true, transparent: true, opacity: 0.12 });
                 const sphere = new THREE.Mesh(geometry, material);
                 scene.add(sphere);
 
-                // Particle stars
                 const starsGeo = new THREE.BufferGeometry();
                 const count = 300;
                 const posArray = new Float32Array(count * 3);
@@ -802,7 +888,6 @@ app.get('*', (req, res) => {
                 });
             }
 
-            // Auth Logic
             async function handleLogin(e) {
                 e.preventDefault();
                 const mobile = document.getElementById('loginMobile').value;
@@ -818,10 +903,10 @@ app.get('*', (req, res) => {
                         localStorage.setItem('lele_token', authToken);
                         loadDashboard();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Authentication Error");
                     }
                 } catch (err) {
-                    alert('Login failed: ' + err.message);
+                    showToast('Login failed: ' + err.message, "Connection Error");
                 }
             }
 
@@ -899,13 +984,20 @@ app.get('*', (req, res) => {
 
             async function submitLoanApplication(e) {
                 e.preventDefault();
+                
+                const addressVal = document.getElementById('clientAddress').value;
+                if (!addressVal || !addressVal.toLowerCase().includes('lucknow')) {
+                    showToast("Loan applications are strictly available for Retail Stores located in Lucknow. Please provide a valid Lucknow store location address.", "Location Restriction");
+                    return;
+                }
+
                 const canvas = document.getElementById('clientSigCanvas');
                 const sigData = canvas.toDataURL();
 
                 const formData = new FormData();
                 formData.append('name', document.getElementById('clientName').value);
                 formData.append('guarantorMobile', document.getElementById('guarantorMobile').value);
-                formData.append('address', document.getElementById('clientAddress').value);
+                formData.append('address', addressVal);
                 formData.append('requestedAmount', document.getElementById('requestedAmount').value);
                 formData.append('returnDate', document.getElementById('returnDate').value);
                 formData.append('upiId', document.getElementById('upiId').value);
@@ -921,19 +1013,26 @@ app.get('*', (req, res) => {
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        alert(data.message);
+                        showToast(data.message, "Application Submitted");
                         loadDashboard();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Application Error");
                     }
                 } catch (err) {
-                    alert("Submission failed: " + err.message);
+                    showToast("Submission failed: " + err.message, "Error");
                 }
             }
 
-            async function repayLoan() {
+            function triggerRepayModal() {
+                showConfirm("Confirm repayment of full loan amount back to Le_Le Finance?", "Repay Credit Facility", (confirmed) => {
+                    if (confirmed) {
+                        executeRepay();
+                    }
+                });
+            }
+
+            async function executeRepay() {
                 if (!currentActiveLoan) return;
-                if (!confirm("Confirm repayment of loan amount back to Le_Le Finance?")) return;
 
                 try {
                     const res = await fetch('/api/loans/repay', {
@@ -946,17 +1045,16 @@ app.get('*', (req, res) => {
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        alert(data.message);
+                        showToast(data.message, "Repayment Complete");
                         loadDashboard();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Repayment Failed");
                     }
                 } catch (err) {
-                    alert("Repayment processing error.");
+                    showToast("Repayment processing error.", "Error");
                 }
             }
 
-            // Financer Admin Modal Logic
             function openFinancerModal() {
                 document.getElementById('financerCodeModal').classList.remove('hidden');
             }
@@ -979,10 +1077,10 @@ app.get('*', (req, res) => {
                         document.getElementById('financerPortalModal').classList.remove('hidden');
                         loadFinancerLoans();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Access Denied");
                     }
                 } catch (err) {
-                    alert("Verification error.");
+                    showToast("Verification error.", "Error");
                 }
             }
 
@@ -1009,7 +1107,7 @@ app.get('*', (req, res) => {
                             <div class="flex justify-between items-start">
                                 <div>
                                     <h4 class="text-base font-bold text-white font-['Space_Grotesk']">\${loan.clientName} (\${loan.clientMobile})</h4>
-                                    <p class="text-xs text-gray-400 mt-0.5">Address: \${loan.address}</p>
+                                    <p class="text-xs text-gray-400 mt-0.5">Retail Store Address: \${loan.address}</p>
                                     <p class="text-xs text-amber-400 font-semibold mt-0.5">Guarantor Mobile: \${loan.guarantorMobile}</p>
                                 </div>
                                 <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider \${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">\${loan.status}</span>
@@ -1036,7 +1134,7 @@ app.get('*', (req, res) => {
                                     <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
                                         Approve Facility
                                     </button>
-                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
+                                    <button onclick="triggerRejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
                                         Reject Facility
                                     </button>
                                 </div>
@@ -1046,7 +1144,7 @@ app.get('*', (req, res) => {
                     });
                     lucide.createIcons();
                 } catch (err) {
-                    alert("Error loading financer requests.");
+                    showToast("Error loading financer requests.", "Error");
                 }
             }
 
@@ -1077,19 +1175,24 @@ app.get('*', (req, res) => {
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        alert(data.message);
+                        showToast(data.message, "Approved");
                         closeApprovalModal();
                         loadFinancerLoans();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Approval Failed");
                     }
                 } catch (err) {
-                    alert("Approval failed.");
+                    showToast("Approval failed.", "Error");
                 }
             }
 
-            async function rejectLoan(loanId) {
-                const customLimit = prompt("Enter new adjusted max limit for this defaulter/rejected client (or leave blank):", "1000");
+            function triggerRejectLoan(loanId) {
+                showPrompt("Enter new adjusted credit limit for this rejected client:", "1000", (customLimit) => {
+                    executeReject(loanId, customLimit);
+                });
+            }
+
+            async function executeReject(loanId, customLimit) {
                 try {
                     const res = await fetch('/api/financer/decision', {
                         method: 'POST',
@@ -1098,22 +1201,21 @@ app.get('*', (req, res) => {
                             code: financerCode,
                             loanId: loanId,
                             decision: 'REJECT',
-                            customLimit: customLimit ? parseFloat(customLimit) : undefined
+                            customLimit: customLimit ? parseFloat(customLimit) : 1000
                         })
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        alert(data.message);
+                        showToast(data.message, "Rejected");
                         loadFinancerLoans();
                     } else {
-                        alert(data.error);
+                        showToast(data.error, "Rejection Failed");
                     }
                 } catch (err) {
-                    alert("Rejection failed.");
+                    showToast("Rejection failed.", "Error");
                 }
             }
 
-            // Generate & Download Agreement PDF
             function downloadAgreementPDF() {
                 if (!currentActiveLoan) return;
                 
@@ -1144,7 +1246,6 @@ app.get('*', (req, res) => {
                 });
             }
 
-            // Init canvas signature pads and dashboard load on page ready
             window.addEventListener('load', () => {
                 init4DBackground();
                 initSignaturePad('clientSigCanvas');
@@ -1161,7 +1262,7 @@ app.get('*', (req, res) => {
     `);
 });
 
-// Start Express Application Server
-app.listen(PORT, () => {
-    console.log(`Le_Le Finance Server is running on port ${PORT}`);
+// Start Express Server
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Le_Le Finance Server is active on port ${PORT}`);
 });
