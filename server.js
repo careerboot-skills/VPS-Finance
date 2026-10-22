@@ -310,49 +310,123 @@ app.get('*', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Le_Le Finance | co-powered by CareerBoot</title>
-        <!-- Tailwind CSS & Lucide Icons -->
+        <title>Le_Le Finance | Ultra-Premium Credit Platform</title>
+        <!-- Tailwind CSS, Lucide Icons, ThreeJS, html2pdf -->
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://unpkg.com/lucide@latest"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
-            body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #030712; color: #f3f4f6; overflow-x: hidden; }
-            canvas#canvas4d { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
-            .glass { background: rgba(17, 24, 39, 0.65); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
-            .glass-gold { background: rgba(245, 158, 11, 0.05); backdrop-filter: blur(16px); border: 1px solid rgba(245, 158, 11, 0.2); }
-            .glow-text { text-shadow: 0 0 20px rgba(59, 130, 246, 0.6); }
-            .glow-gold { text-shadow: 0 0 20px rgba(245, 158, 11, 0.6); }
-            .btn-glow { box-shadow: 0 0 25px rgba(59, 130, 246, 0.4); }
-            .btn-glow:hover { box-shadow: 0 0 35px rgba(59, 130, 246, 0.7); }
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap');
+            
+            :root {
+                --gold-glow: rgba(245, 158, 11, 0.4);
+                --financial-dark: #030712;
+            }
+
+            body { 
+                font-family: 'Plus Jakarta Sans', sans-serif; 
+                background-color: var(--financial-dark); 
+                color: #f3f4f6; 
+                overflow-x: hidden; 
+            }
+
+            canvas#canvas4d { 
+                position: fixed; 
+                top: 0; 
+                left: 0; 
+                width: 100vw; 
+                height: 100vh; 
+                z-index: 0; 
+                pointer-events: none; 
+            }
+
+            /* Financial Metallic Glassmorphism */
+            .glass-card { 
+                background: linear-gradient(135deg, rgba(17, 24, 39, 0.75) 0%, rgba(10, 15, 29, 0.85) 100%); 
+                backdrop-filter: blur(20px); 
+                border: 1px solid rgba(255, 255, 255, 0.08); 
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            }
+
+            .glass-gold { 
+                background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(180, 83, 9, 0.03) 100%); 
+                backdrop-filter: blur(20px); 
+                border: 1px solid rgba(245, 158, 11, 0.25); 
+                box-shadow: 0 15px 35px rgba(245, 158, 11, 0.08);
+            }
+
+            .glass-modal { 
+                background: rgba(3, 7, 18, 0.88); 
+                backdrop-filter: blur(24px); 
+            }
+
+            .glow-gold { 
+                text-shadow: 0 0 25px rgba(245, 158, 11, 0.5); 
+            }
+
+            .btn-gold {
+                background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+                color: #000;
+                font-weight: 800;
+                box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
+                transition: all 0.25s ease;
+            }
+
+            .btn-gold:hover {
+                box-shadow: 0 6px 30px rgba(245, 158, 11, 0.6);
+                transform: translateY(-1px);
+            }
+
+            .badge-gold {
+                background: rgba(245, 158, 11, 0.12);
+                border: 1px solid rgba(245, 158, 11, 0.3);
+                color: #fbbf24;
+            }
+
+            /* Custom Styled Scrollbar */
+            ::-webkit-scrollbar { width: 6px; }
+            ::-webkit-scrollbar-track { background: #030712; }
+            ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 10px; }
+            ::-webkit-scrollbar-thumb:hover { background: #d97706; }
         </style>
     </head>
-    <body class="relative min-h-screen">
+    <body class="relative min-h-screen flex flex-col justify-between">
 
-        <!-- 4D Interactive Three.js Background -->
+        <!-- 4D Financial Grid & Geometric Background -->
         <canvas id="canvas4d"></canvas>
 
         <div class="relative z-10 flex flex-col min-h-screen">
             <!-- Header Nav -->
-            <header class="glass sticky top-0 z-50 px-6 py-4 flex justify-between items-center border-b border-gray-800">
-                <div class="flex items-center gap-3">
-                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-yellow-500 via-amber-400 to-amber-600 flex items-center justify-center font-black text-2xl text-black shadow-lg shadow-amber-500/20 tracking-tighter">
-                        L₹
+            <header class="glass-card sticky top-0 z-40 px-6 py-4 flex justify-between items-center border-b border-gray-800/80">
+                <div class="flex items-center gap-3.5">
+                    <!-- Custom L + ₹ Combination Logo -->
+                    <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20 border border-amber-300/40 p-1">
+                        <svg class="w-7 h-7 text-black fill-current" viewBox="0 0 100 100">
+                            <!-- L Stem integrated with Rupee horizontal bars -->
+                            <path d="M 22 18 L 38 18 L 38 72 L 78 72 L 78 86 L 22 86 Z" />
+                            <path d="M 38 32 L 72 32 L 72 42 L 38 42 Z" />
+                            <path d="M 38 48 L 68 48 L 68 58 L 38 58 Z" />
+                        </svg>
                     </div>
                     <div>
-                        <h1 class="text-xl font-extrabold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-amber-400 via-yellow-200 to-amber-500">
-                            Le_Le Finance
-                        </h1>
-                        <p class="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">co-powered by CareerBoot</p>
+                        <div class="flex items-center gap-2">
+                            <h1 class="text-xl font-black tracking-tight text-white font-['Space_Grotesk']">
+                                LE_LE <span class="bg-clip-text text-transparent bg-gradient-to-r from-amber-400 to-yellow-200">FINANCE</span>
+                            </h1>
+                            <span class="text-[9px] bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">PRO</span>
+                        </div>
+                        <p class="text-[10px] text-gray-400 uppercase tracking-widest font-semibold flex items-center gap-1">
+                            co-powered by <span class="text-amber-400 font-bold">CareerBoot</span>
+                        </p>
                     </div>
                 </div>
 
                 <div class="flex items-center gap-4">
-                    <button id="financerBtn" onclick="openFinancerModal()" class="px-4 py-2 rounded-xl bg-gray-900/80 border border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-black font-semibold text-xs transition-all flex items-center gap-2">
-                        <i data-lucide="shield-check" class="w-4 h-4"></i> Financer Portal
+                    <button id="financerBtn" onclick="openFinancerModal()" class="px-4 py-2.5 rounded-xl bg-gray-900/90 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 font-bold text-xs transition-all flex items-center gap-2 shadow-sm">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-amber-400"></i> Financer Portal
                     </button>
-                    <button id="logoutBtn" onclick="logout()" class="hidden px-3 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 text-xs">
+                    <button id="logoutBtn" onclick="logout()" class="hidden px-3.5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 text-xs font-bold transition">
                         <i data-lucide="log-out" class="w-4 h-4"></i>
                     </button>
                 </div>
@@ -362,155 +436,170 @@ app.get('*', (req, res) => {
             <main class="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
 
                 <!-- Auth Screen -->
-                <div id="authScreen" class="glass p-8 rounded-3xl max-w-md mx-auto w-full shadow-2xl border border-gray-800 my-auto">
+                <div id="authScreen" class="glass-card p-8 sm:p-10 rounded-3xl max-w-md mx-auto w-full shadow-2xl border border-gray-800 my-auto relative overflow-hidden">
+                    <div class="absolute -top-12 -right-12 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none"></div>
+                    
                     <div class="text-center mb-8">
-                        <h2 class="text-3xl font-extrabold text-white mb-2">Welcome Back</h2>
-                        <p class="text-gray-400 text-sm">Enter your 10-digit mobile number to access Instant 0% Interest Loans.</p>
+                        <div class="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto mb-4 text-amber-400">
+                            <i data-lucide="wallet" class="w-8 h-8"></i>
+                        </div>
+                        <h2 class="text-2xl font-black text-white font-['Space_Grotesk']">Instant Capital Access</h2>
+                        <p class="text-gray-400 text-xs mt-1.5">Enter your 10-digit mobile number to access 0% Interest Micro-Loans.</p>
                     </div>
+
                     <form onsubmit="handleLogin(event)" class="space-y-6">
                         <div>
-                            <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Mobile Number</label>
+                            <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Registered Mobile</label>
                             <div class="relative">
                                 <span class="absolute left-4 top-3.5 text-gray-400 text-sm font-bold">+91</span>
-                                <input type="tel" id="loginMobile" maxlength="10" required placeholder="9005041462" class="w-full bg-gray-950 border border-gray-800 rounded-xl py-3.5 pl-14 pr-4 text-white font-medium focus:border-amber-400 focus:ring-1 focus:ring-amber-400 outline-none transition">
+                                <input type="tel" id="loginMobile" maxlength="10" required placeholder="9005041462" class="w-full bg-gray-950/80 border border-gray-800 rounded-2xl py-3.5 pl-14 pr-4 text-white font-medium focus:border-amber-400 focus:ring-1 focus:ring-amber-400 outline-none transition text-sm">
                             </div>
                         </div>
-                        <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-extrabold text-sm uppercase tracking-wider btn-glow hover:opacity-95 transition">
-                            Continue / Express Register
+                        <button type="submit" class="w-full py-4 rounded-2xl btn-gold text-xs uppercase tracking-widest flex items-center justify-center gap-2">
+                            <span>Access Capital Dashboard</span>
+                            <i data-lucide="arrow-right" class="w-4 h-4"></i>
                         </button>
                     </form>
                 </div>
 
                 <!-- Dashboard Screen -->
-                <div id="dashboardScreen" class="hidden space-y-6">
+                <div id="dashboardScreen" class="hidden space-y-6 my-auto">
                     <!-- Civil Score Banner -->
-                    <div class="glass-gold p-6 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
-                        <div class="space-y-2 text-center md:text-left">
-                            <span class="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold uppercase tracking-wider">
-                                LeLe Credit Health Profile
+                    <div class="glass-gold p-6 sm:p-8 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+                        <div class="space-y-2 text-center md:text-left z-10">
+                            <span class="badge-gold px-3.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-widest">
+                                LeLe Credit Score Engine
                             </span>
-                            <h3 class="text-2xl font-black text-white">Credit Score & Allowed Limit</h3>
-                            <p class="text-xs text-gray-400 max-w-md">Every timely payback automatically boosts your credit standing and unlocks a 25% higher borrowing limit!</p>
+                            <h3 class="text-2xl font-black text-white font-['Space_Grotesk']">Credit Standing & Liquidity Limit</h3>
+                            <p class="text-xs text-gray-400 max-w-md leading-relaxed">Timely 30-day repayments automatically boost your credit standing and unlock a 25% compounded limit expansion.</p>
                         </div>
-                        <div class="flex items-center gap-6">
+                        <div class="flex items-center gap-8 z-10 bg-gray-950/60 p-5 rounded-2xl border border-amber-500/20">
                             <div class="text-center">
-                                <p class="text-xs uppercase text-gray-400 font-bold tracking-wider">LeLe Civil Score</p>
-                                <p id="civilScoreVal" class="text-4xl font-black text-amber-400 glow-gold">750</p>
+                                <p class="text-[10px] uppercase text-gray-400 font-bold tracking-wider mb-1">LeLe Civil Score</p>
+                                <p id="civilScoreVal" class="text-4xl font-black text-amber-400 glow-gold font-['Space_Grotesk']">750</p>
                             </div>
                             <div class="h-10 w-[1px] bg-gray-800"></div>
                             <div class="text-center">
-                                <p class="text-xs uppercase text-gray-400 font-bold tracking-wider">Max Limit</p>
-                                <p id="maxLimitVal" class="text-4xl font-black text-green-400 glow-text">₹2,000</p>
+                                <p class="text-[10px] uppercase text-gray-400 font-bold tracking-wider mb-1">Max Borrow Limit</p>
+                                <p id="maxLimitVal" class="text-4xl font-black text-emerald-400 font-['Space_Grotesk']">₹2,000</p>
                             </div>
                         </div>
                     </div>
 
                     <!-- Ongoing Active Loan Card -->
-                    <div id="activeLoanContainer" class="hidden glass p-6 rounded-3xl space-y-6 border border-amber-500/30">
-                        <div class="flex justify-between items-start">
+                    <div id="activeLoanContainer" class="hidden glass-card p-6 sm:p-8 rounded-3xl space-y-6 border border-amber-500/30">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-800/80 pb-5">
                             <div>
-                                <span id="loanStatusBadge" class="px-3 py-1 rounded-full text-xs font-bold uppercase"></span>
-                                <h4 class="text-xl font-extrabold text-white mt-2">Active Loan Agreement</h4>
+                                <span id="loanStatusBadge" class="px-3.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider"></span>
+                                <h4 class="text-xl font-bold text-white font-['Space_Grotesk'] mt-2">Active Credit Facility</h4>
                             </div>
-                            <button id="downloadAgreementBtn" onclick="downloadAgreementPDF()" class="hidden px-4 py-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold hover:bg-amber-500 hover:text-black transition flex items-center gap-2">
-                                <i data-lucide="download" class="w-4 h-4"></i> Download Agreement PDF
+                            <button id="downloadAgreementBtn" onclick="downloadAgreementPDF()" class="hidden px-4 py-2.5 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/20 transition flex items-center gap-2">
+                                <i data-lucide="file-check" class="w-4 h-4"></i> Legal Agreement PDF
                             </button>
                         </div>
 
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950/60 p-4 rounded-2xl border border-gray-800/60">
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950/80 p-5 rounded-2xl border border-gray-800/80">
                             <div>
-                                <p class="text-xs text-gray-400">Principal Amount</p>
-                                <p id="loanAmount" class="text-lg font-bold text-white">₹0</p>
+                                <p class="text-[11px] text-gray-400 font-medium">Principal Allocated</p>
+                                <p id="loanAmount" class="text-lg font-bold text-white mt-0.5">₹0</p>
                             </div>
                             <div>
-                                <p class="text-xs text-gray-400">Interest Terms</p>
-                                <p class="text-lg font-bold text-green-400">0% (30 Days Free)</p>
+                                <p class="text-[11px] text-gray-400 font-medium">Interest Facility</p>
+                                <p class="text-lg font-bold text-emerald-400 mt-0.5">0% (First 30 Days)</p>
                             </div>
                             <div>
-                                <p class="text-xs text-gray-400">Due Date</p>
-                                <p id="loanReturnDate" class="text-lg font-bold text-amber-400">-</p>
+                                <p class="text-[11px] text-gray-400 font-medium">Maturity Return Date</p>
+                                <p id="loanReturnDate" class="text-lg font-bold text-amber-400 mt-0.5">-</p>
                             </div>
                             <div>
-                                <p class="text-xs text-gray-400">UPI Receival Address</p>
-                                <p id="loanUpi" class="text-lg font-bold text-gray-200">-</p>
+                                <p class="text-[11px] text-gray-400 font-medium">Receival UPI ID</p>
+                                <p id="loanUpi" class="text-lg font-bold text-gray-200 mt-0.5 truncate">-</p>
                             </div>
                         </div>
 
                         <div id="repaySection" class="hidden pt-2 flex justify-end">
-                            <button onclick="repayLoan()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-green-500/20">
-                                Repay Full Amount Now
+                            <button onclick="repayLoan()" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 text-black font-extrabold text-xs uppercase tracking-wider hover:opacity-95 shadow-lg shadow-emerald-500/20 flex items-center gap-2">
+                                <i data-lucide="check-circle" class="w-4 h-4"></i> Liquidate & Repay Loan
                             </button>
                         </div>
                     </div>
 
                     <!-- Application Locked Alert -->
-                    <div id="lockedNotice" class="hidden glass p-6 rounded-3xl text-center space-y-2 border border-blue-500/30">
-                        <i data-lucide="lock" class="w-8 h-8 text-blue-400 mx-auto"></i>
-                        <h4 class="text-lg font-bold text-white">New Loan Applications Locked</h4>
-                        <p class="text-xs text-gray-400">You currently have an active or pending loan request. Complete or clear your existing loan to unlock a new application.</p>
+                    <div id="lockedNotice" class="hidden glass-card p-6 rounded-3xl text-center space-y-2 border border-blue-500/30 bg-blue-950/10">
+                        <i data-lucide="lock" class="w-7 h-7 text-blue-400 mx-auto"></i>
+                        <h4 class="text-base font-bold text-white font-['Space_Grotesk']">New Credit Applications Locked</h4>
+                        <p class="text-xs text-gray-400">You currently have an active or pending loan facility. Repay your active credit to request new liquidity.</p>
                     </div>
 
                     <!-- Loan Request Form -->
-                    <div id="applicationFormContainer" class="glass p-8 rounded-3xl space-y-6">
-                        <h3 class="text-2xl font-black text-white flex items-center gap-2">
-                            <i data-lucide="file-plus" class="w-6 h-6 text-amber-400"></i> Request Micro-Loan
-                        </h3>
+                    <div id="applicationFormContainer" class="glass-card p-6 sm:p-8 rounded-3xl space-y-6">
+                        <div class="border-b border-gray-800/80 pb-4">
+                            <h3 class="text-xl font-bold text-white font-['Space_Grotesk'] flex items-center gap-2.5">
+                                <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i> Request Interest-Free Loan
+                            </h3>
+                            <p class="text-xs text-gray-400 mt-1">Submit mandatory identity verification and return schedule to receive approved capital.</p>
+                        </div>
 
                         <form id="loanForm" onsubmit="submitLoanApplication(event)" class="space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
-                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Full Client Name</label>
-                                    <input type="text" id="clientName" required placeholder="Vaibhav Joshi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Full Client Legal Name</label>
+                                    <input type="text" id="clientName" required placeholder="Vaibhav Joshi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Guarantor Mobile Number</label>
-                                    <input type="tel" id="guarantorMobile" maxlength="10" required placeholder="Must be different from client" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Guarantor Mobile Number</label>
+                                    <input type="tel" id="guarantorMobile" maxlength="10" required placeholder="Must be different from client" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                             </div>
 
                             <div>
-                                <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Complete Address</label>
-                                <textarea id="clientAddress" required rows="2" placeholder="Ashiyana, Lucknow, Uttar Pradesh" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none"></textarea>
+                                <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Residential Address</label>
+                                <textarea id="clientAddress" required rows="2" placeholder="Ashiyana, Lucknow, Uttar Pradesh" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none"></textarea>
                             </div>
 
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div>
-                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Loan Amount (Max ₹2,000)</label>
-                                    <input type="number" id="requestedAmount" max="2000" min="100" required value="2000" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Requested Amount (Max ₹2,000)</label>
+                                    <input type="number" id="requestedAmount" max="2000" min="100" required value="2000" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-bold focus:border-amber-400 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">Return Date</label>
-                                    <input type="date" id="returnDate" required class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Return Scheduled Date</label>
+                                    <input type="date" id="returnDate" required class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-semibold uppercase text-gray-400 mb-2">UPI ID (For Funds Transfer)</label>
-                                    <input type="text" id="upiId" required placeholder="user@upi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-white font-medium focus:border-amber-400 outline-none">
+                                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">UPI ID (For Funds Transfer)</label>
+                                    <input type="text" id="upiId" required placeholder="user@upi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                             </div>
 
                             <!-- PDF Uploads -->
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div class="p-4 border border-dashed border-gray-700 rounded-2xl bg-gray-950/40">
-                                    <label class="block text-xs font-semibold uppercase text-gray-300 mb-2">Upload Aadhar PDF</label>
-                                    <input type="file" id="aadharPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-300 hover:file:bg-amber-500/30">
+                                <div class="p-4 border border-dashed border-gray-800 rounded-2xl bg-gray-950/40 hover:border-amber-500/40 transition">
+                                    <label class="block text-xs font-bold uppercase text-gray-300 mb-2 flex items-center gap-2">
+                                        <i data-lucide="file-text" class="w-4 h-4 text-amber-400"></i> Aadhar Document (PDF)
+                                    </label>
+                                    <input type="file" id="aadharPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500/10 file:text-amber-300 hover:file:bg-amber-500/20 cursor-pointer">
                                 </div>
-                                <div class="p-4 border border-dashed border-gray-700 rounded-2xl bg-gray-950/40">
-                                    <label class="block text-xs font-semibold uppercase text-gray-300 mb-2">Upload PAN PDF</label>
-                                    <input type="file" id="panPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-amber-500/20 file:text-amber-300 hover:file:bg-amber-500/30">
+                                <div class="p-4 border border-dashed border-gray-800 rounded-2xl bg-gray-950/40 hover:border-amber-500/40 transition">
+                                    <label class="block text-xs font-bold uppercase text-gray-300 mb-2 flex items-center gap-2">
+                                        <i data-lucide="file-text" class="w-4 h-4 text-amber-400"></i> PAN Document (PDF)
+                                    </label>
+                                    <input type="file" id="panPdf" accept="application/pdf" required class="text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500/10 file:text-amber-300 hover:file:bg-amber-500/20 cursor-pointer">
                                 </div>
                             </div>
 
                             <!-- Signature Pad -->
                             <div>
                                 <div class="flex justify-between items-center mb-2">
-                                    <label class="text-xs font-semibold uppercase text-gray-400">Client Digital Signature (Draw Below)</label>
+                                    <label class="text-xs font-bold uppercase text-gray-400">Client Signature (Draw Below)</label>
                                     <button type="button" onclick="clearSignature('clientSigCanvas')" class="text-xs text-amber-400 hover:underline">Clear Canvas</button>
                                 </div>
-                                <canvas id="clientSigCanvas" width="500" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-xl touch-none"></canvas>
+                                <canvas id="clientSigCanvas" width="500" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-2xl touch-none cursor-crosshair"></canvas>
                             </div>
 
-                            <button type="submit" class="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-extrabold text-sm uppercase tracking-wider btn-glow hover:opacity-95 transition">
-                                Submit Formal Loan Request
+                            <button type="submit" class="w-full py-4 rounded-2xl btn-gold text-xs uppercase tracking-widest flex items-center justify-center gap-2">
+                                <i data-lucide="send" class="w-4 h-4"></i>
+                                <span>Submit Formal Application</span>
                             </button>
                         </form>
                     </div>
@@ -519,41 +608,47 @@ app.get('*', (req, res) => {
             </main>
 
             <!-- Footer -->
-            <footer class="glass px-6 py-4 text-center text-xs text-gray-500 border-t border-gray-800 mt-auto">
+            <footer class="glass-card px-6 py-4 text-center text-xs text-gray-500 border-t border-gray-800/80 mt-auto">
                 Le_Le Finance co-powered by <span class="text-amber-400 font-bold">CareerBoot</span> &copy; 2026. All rights reserved. 0% Interest subject to 30-day repayment.
             </footer>
         </div>
 
         <!-- Financer Unlocking Modal -->
-        <div id="financerCodeModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div class="glass p-8 rounded-3xl max-w-sm w-full space-y-6 border border-amber-500/30">
-                <div class="text-center">
-                    <i data-lucide="shield-alert" class="w-10 h-10 text-amber-400 mx-auto mb-2"></i>
-                    <h3 class="text-xl font-bold text-white">Financer Gateway</h3>
-                    <p class="text-xs text-gray-400">Enter Top Secret Access Code to unlock dashboard.</p>
+        <div id="financerCodeModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-8 rounded-3xl max-w-sm w-full space-y-6 border border-amber-500/40 shadow-2xl relative">
+                <div class="text-center space-y-2">
+                    <div class="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                        <i data-lucide="key-round" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white font-['Space_Grotesk']">Financer Gateway</h3>
+                    <p class="text-xs text-gray-400">Enter Top Secret Access Passcode to unlock admin control.</p>
                 </div>
-                <input type="password" id="financerPasscode" placeholder="Enter Secret Code" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-center text-white tracking-widest outline-none focus:border-amber-400">
+                <input type="password" id="financerPasscode" placeholder="Enter Secret Code" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-center text-white tracking-widest font-mono text-sm outline-none focus:border-amber-400">
                 <div class="flex gap-3">
-                    <button onclick="closeFinancerModal()" class="w-1/2 py-3 rounded-xl bg-gray-800 text-gray-300 font-bold text-xs uppercase">Cancel</button>
-                    <button onclick="unlockFinancerPortal()" class="w-1/2 py-3 rounded-xl bg-amber-500 text-black font-extrabold text-xs uppercase shadow-lg shadow-amber-500/20">Unlock</button>
+                    <button onclick="closeFinancerModal()" class="w-1/2 py-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 font-bold text-xs uppercase">Cancel</button>
+                    <button onclick="unlockFinancerPortal()" class="w-1/2 py-3 rounded-xl btn-gold text-xs uppercase">Unlock</button>
                 </div>
             </div>
         </div>
 
         <!-- Financer Admin Portal View Screen -->
-        <div id="financerPortalModal" class="hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-lg overflow-y-auto p-4 sm:p-8">
+        <div id="financerPortalModal" class="hidden fixed inset-0 z-50 glass-modal overflow-y-auto p-4 sm:p-8">
             <div class="max-w-6xl mx-auto space-y-6">
-                <div class="flex justify-between items-center glass p-6 rounded-3xl border border-amber-500/40">
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center font-black text-black">
-                            L₹
+                <div class="flex justify-between items-center glass-card p-6 rounded-3xl border border-amber-500/40">
+                    <div class="flex items-center gap-3.5">
+                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 flex items-center justify-center text-black p-1">
+                            <svg class="w-6 h-6 fill-current" viewBox="0 0 100 100">
+                                <path d="M 22 18 L 38 18 L 38 72 L 78 72 L 78 86 L 22 86 Z" />
+                                <path d="M 38 32 L 72 32 L 72 42 L 38 42 Z" />
+                                <path d="M 38 48 L 68 48 L 68 58 L 38 58 Z" />
+                            </svg>
                         </div>
                         <div>
-                            <h2 class="text-xl font-bold text-white">Financer Control Center</h2>
-                            <p class="text-xs text-amber-400">Secret Access Granted • Live Loan Demands</p>
+                            <h2 class="text-lg font-bold text-white font-['Space_Grotesk']">Financer Control Center</h2>
+                            <p class="text-xs text-amber-400 font-medium">Secret Access Active • Client Underwriting Requests</p>
                         </div>
                     </div>
-                    <button onclick="closeFinancerPortal()" class="px-4 py-2 rounded-xl bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-bold">
+                    <button onclick="closeFinancerPortal()" class="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold hover:bg-red-500/20 transition">
                         Exit Portal
                     </button>
                 </div>
@@ -564,18 +659,20 @@ app.get('*', (req, res) => {
         </div>
 
         <!-- Financer Approval Signature Modal -->
-        <div id="approvalModal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-            <div class="glass p-8 rounded-3xl max-w-lg w-full space-y-6 border border-amber-500/40">
-                <h3 class="text-xl font-bold text-white">Authorize & Approve Loan Application</h3>
-                <p class="text-xs text-gray-400">Draw your signature below as the authorized financer to complete agreement execution.</p>
+        <div id="approvalModal" class="hidden fixed inset-0 z-50 glass-modal flex items-center justify-center p-4">
+            <div class="glass-card p-8 rounded-3xl max-w-lg w-full space-y-6 border border-amber-500/40">
+                <div class="space-y-1">
+                    <h3 class="text-xl font-bold text-white font-['Space_Grotesk']">Authorize Loan Approval</h3>
+                    <p class="text-xs text-gray-400">Draw your financer signature below to execute the legally binding loan agreement.</p>
+                </div>
                 
-                <canvas id="financerSigCanvas" width="450" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-xl touch-none"></canvas>
+                <canvas id="financerSigCanvas" width="450" height="150" class="w-full bg-gray-950 border border-gray-800 rounded-2xl touch-none cursor-crosshair"></canvas>
                 
                 <div class="flex justify-between items-center">
-                    <button type="button" onclick="clearSignature('financerSigCanvas')" class="text-xs text-amber-400">Clear</button>
+                    <button type="button" onclick="clearSignature('financerSigCanvas')" class="text-xs text-amber-400 font-medium hover:underline">Clear Signature</button>
                     <div class="flex gap-3">
-                        <button onclick="closeApprovalModal()" class="px-4 py-2 rounded-xl bg-gray-800 text-gray-300 text-xs font-bold">Cancel</button>
-                        <button onclick="confirmApproval()" class="px-5 py-2 rounded-xl bg-green-500 text-black font-extrabold text-xs uppercase">Sign & Approve</button>
+                        <button onclick="closeApprovalModal()" class="px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 text-xs font-bold">Cancel</button>
+                        <button onclick="confirmApproval()" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider hover:bg-emerald-400 transition">Execute & Approve</button>
                     </div>
                 </div>
             </div>
@@ -584,31 +681,31 @@ app.get('*', (req, res) => {
         <!-- Hidden PDF Printable Agreement Container -->
         <div id="pdfTemplate" class="hidden bg-white text-black p-10 space-y-6 text-sm font-serif">
             <div class="text-center border-b-2 border-black pb-4">
-                <h1 class="text-2xl font-bold uppercase">Le_Le Finance Loan Agreement</h1>
-                <p class="text-xs italic">Co-Powered by CareerBoot Center of Excellence</p>
+                <h1 class="text-2xl font-bold uppercase tracking-wider">Le_Le Finance Legal Loan Agreement</h1>
+                <p class="text-xs italic mt-1">Co-Powered by CareerBoot Center of Excellence</p>
             </div>
             
             <div class="grid grid-cols-2 gap-4 text-xs">
                 <div><strong>Agreement Date:</strong> <span id="pdfDate"></span></div>
-                <div><strong>Status:</strong> <span id="pdfStatus">APPROVED</span></div>
-                <div><strong>Client Name:</strong> <span id="pdfClientName"></span></div>
-                <div><strong>Client Mobile:</strong> <span id="pdfClientMobile"></span></div>
+                <div><strong>Facility Status:</strong> <span id="pdfStatus">APPROVED</span></div>
+                <div><strong>Borrower Name:</strong> <span id="pdfClientName"></span></div>
+                <div><strong>Borrower Mobile:</strong> <span id="pdfClientMobile"></span></div>
                 <div><strong>Guarantor Mobile:</strong> <span id="pdfGuarantor"></span></div>
-                <div><strong>Client Address:</strong> <span id="pdfAddress"></span></div>
+                <div><strong>Borrower Address:</strong> <span id="pdfAddress"></span></div>
             </div>
 
-            <div class="border p-4 bg-gray-50 rounded">
-                <h3 class="font-bold border-b pb-1 mb-2">Loan Financial Terms</h3>
-                <p><strong>Approved Principal Amount:</strong> ₹<span id="pdfAmount"></span></p>
-                <p><strong>Interest Rate:</strong> 0% Interest for first 30 Days.</p>
+            <div class="border p-4 bg-gray-50 rounded space-y-2">
+                <h3 class="font-bold border-b pb-1 mb-2">Financial Terms & Covenants</h3>
+                <p><strong>Allocated Principal Amount:</strong> ₹<span id="pdfAmount"></span></p>
+                <p><strong>Interest Standard:</strong> 0% Interest for first 30 Days.</p>
                 <p><strong>Scheduled Return Date:</strong> <span id="pdfReturnDate"></span></p>
-                <p><strong>Default Terms:</strong> Beyond 30 days, an interest penalty of 5% per day will apply until full loan liquidation.</p>
+                <p><strong>Default Term:</strong> Failure to pay within 30 days incurs a daily late fee of 5% until the full balance is cleared.</p>
             </div>
 
             <div class="grid grid-cols-2 gap-8 pt-8">
                 <div class="text-center">
                     <img id="pdfClientSig" class="h-16 mx-auto border-b border-black mb-1" alt="Client Signature">
-                    <p class="font-bold text-xs">Client Signature</p>
+                    <p class="font-bold text-xs">Borrower Signature</p>
                 </div>
                 <div class="text-center">
                     <img id="pdfFinancerSig" class="h-16 mx-auto border-b border-black mb-1" alt="Financer Signature">
@@ -659,7 +756,7 @@ app.get('*', (req, res) => {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
 
-            // Init Three.js 4D Animated Background
+            // Init Three.js 4D Animated Financial Grid Background
             function init4DBackground() {
                 const canvas = document.getElementById('canvas4d');
                 const scene = new THREE.Scene();
@@ -669,18 +766,31 @@ app.get('*', (req, res) => {
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.setPixelRatio(window.devicePixelRatio);
 
-                // Create geometric hyper-mesh particles
-                const geometry = new THREE.IcosahedronGeometry(10, 2);
-                const material = new THREE.MeshBasicMaterial({ color: 0xd97706, wireframe: true, transparent: true, opacity: 0.15 });
+                // Create geometric hyper-mesh & floating particles
+                const geometry = new THREE.IcosahedronGeometry(12, 2);
+                const material = new THREE.MeshBasicMaterial({ color: 0xd97706, wireframe: true, transparent: true, opacity: 0.12 });
                 const sphere = new THREE.Mesh(geometry, material);
                 scene.add(sphere);
+
+                // Particle stars
+                const starsGeo = new THREE.BufferGeometry();
+                const count = 300;
+                const posArray = new Float32Array(count * 3);
+                for(let i=0; i<count*3; i++) {
+                    posArray[i] = (Math.random() - 0.5) * 100;
+                }
+                starsGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+                const starsMat = new THREE.PointsMaterial({ size: 0.15, color: 0xf59e0b, transparent: true, opacity: 0.3 });
+                const stars = new THREE.Points(starsGeo, starsMat);
+                scene.add(stars);
 
                 camera.position.z = 25;
 
                 function animate() {
                     requestAnimationFrame(animate);
-                    sphere.rotation.x += 0.002;
-                    sphere.rotation.y += 0.003;
+                    sphere.rotation.x += 0.0015;
+                    sphere.rotation.y += 0.0025;
+                    stars.rotation.y -= 0.0005;
                     renderer.render(scene, camera);
                 }
                 animate();
@@ -770,13 +880,13 @@ app.get('*', (req, res) => {
 
                     const badge = document.getElementById('loanStatusBadge');
                     if (currentActiveLoan.status === 'PENDING') {
-                        badge.className = "px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 text-xs font-bold uppercase";
+                        badge.className = "px-3.5 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-bold uppercase tracking-wider";
                         badge.innerText = "Application Under Review";
                         agreementBtn.classList.add('hidden');
                         repaySec.classList.add('hidden');
                     } else if (currentActiveLoan.status === 'APPROVED') {
-                        badge.className = "px-3 py-1 rounded-full bg-green-500/20 text-green-300 border border-green-500/40 text-xs font-bold uppercase";
-                        badge.innerText = "Loan Approved & Disbursed";
+                        badge.className = "px-3.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider";
+                        badge.innerText = "Facility Active & Disbursed";
                         agreementBtn.classList.remove('hidden');
                         repaySec.classList.remove('hidden');
                     }
@@ -894,40 +1004,40 @@ app.get('*', (req, res) => {
 
                     loans.forEach(loan => {
                         const card = document.createElement('div');
-                        card.className = "glass p-6 rounded-2xl border border-gray-800 space-y-4";
+                        card.className = "glass-card p-6 rounded-2xl border border-gray-800 space-y-4";
                         card.innerHTML = \`
                             <div class="flex justify-between items-start">
                                 <div>
-                                    <h4 class="text-lg font-bold text-white">\${loan.clientName} (\${loan.clientMobile})</h4>
-                                    <p class="text-xs text-gray-400">Address: \${loan.address}</p>
-                                    <p class="text-xs text-amber-400 font-semibold">Guarantor Mobile: \${loan.guarantorMobile}</p>
+                                    <h4 class="text-base font-bold text-white font-['Space_Grotesk']">\${loan.clientName} (\${loan.clientMobile})</h4>
+                                    <p class="text-xs text-gray-400 mt-0.5">Address: \${loan.address}</p>
+                                    <p class="text-xs text-amber-400 font-semibold mt-0.5">Guarantor Mobile: \${loan.guarantorMobile}</p>
                                 </div>
-                                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase \${loan.status === 'APPROVED' ? 'bg-green-500/20 text-green-400' : loan.status === 'REJECTED' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}">\${loan.status}</span>
+                                <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider \${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">\${loan.status}</span>
                             </div>
 
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950 p-4 rounded-xl text-xs">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-950/80 p-4 rounded-xl text-xs border border-gray-800/80">
                                 <div><span class="text-gray-500">Requested Amount:</span> <p class="text-white font-bold text-sm">₹\${loan.requestedAmount}</p></div>
                                 <div><span class="text-gray-500">Return Date:</span> <p class="text-amber-400 font-bold text-sm">\${new Date(loan.returnDate).toLocaleDateString()}</p></div>
-                                <div><span class="text-gray-500">UPI ID:</span> <p class="text-gray-200 font-bold text-sm">\${loan.upiId}</p></div>
-                                <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-green-400 font-bold text-sm">\${loan.userId ? loan.userId.civilScore : 750}</p></div>
+                                <div><span class="text-gray-500">UPI ID:</span> <p class="text-gray-200 font-bold text-sm truncate">\${loan.upiId}</p></div>
+                                <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-emerald-400 font-bold text-sm">\${loan.userId ? loan.userId.civilScore : 750}</p></div>
                             </div>
 
                             <div class="flex gap-4">
-                                <a href="\${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-lg bg-gray-800 text-xs font-bold text-gray-300 hover:bg-gray-700 flex items-center gap-1">
-                                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i> View Aadhar PDF
+                                <a href="\${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
+                                    <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View Aadhar PDF
                                 </a>
-                                <a href="\${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-lg bg-gray-800 text-xs font-bold text-gray-300 hover:bg-gray-700 flex items-center gap-1">
-                                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i> View PAN PDF
+                                <a href="\${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
+                                    <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View PAN PDF
                                 </a>
                             </div>
 
                             \${loan.status === 'PENDING' ? \`
                                 <div class="flex gap-3 pt-2">
-                                    <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-green-500 text-black font-extrabold text-xs uppercase shadow-md shadow-green-500/20">
-                                        Approve Loan
+                                    <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
+                                        Approve Facility
                                     </button>
-                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/20 text-red-400 border border-red-500/30 font-bold text-xs uppercase">
-                                        Reject Loan
+                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
+                                        Reject Facility
                                     </button>
                                 </div>
                             \` : ''}
