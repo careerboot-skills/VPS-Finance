@@ -811,7 +811,7 @@ app.get('*', (req, res) => {
                     <h3 class="text-base font-bold text-white font-['Space_Grotesk']">Manage Repayment Payment Gateway (QR & UPI ID)</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                         <div class="space-y-3">
-                            <label class="block text-xs font-bold uppercase text-gray-400">Financer Merchant UPI ID</label>
+                            <label class="block text-xs font-bold uppercase text-gray-400">Financer UPI ID</label>
                             <input type="text" id="financerUpiInput" placeholder="9005041462@upi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-white text-sm outline-none focus:border-amber-400">
                         </div>
                         <div class="space-y-3">
@@ -1013,7 +1013,7 @@ app.get('*', (req, res) => {
                 if (!authToken) return;
                 try {
                     const res = await fetch('/api/client/profile', {
-                        headers: { 'Authorization': \`Bearer \${authToken}\` }
+                        headers: { 'Authorization': `Bearer ${authToken}` }
                     });
                     const data = await res.json();
 
@@ -1023,7 +1023,7 @@ app.get('*', (req, res) => {
                         document.getElementById('logoutBtn').classList.remove('hidden');
 
                         document.getElementById('civilScoreVal').innerText = data.user.civilScore;
-                        document.getElementById('maxLimitVal').innerText = \`₹\${data.user.maxLimit.toLocaleString()}\`;
+                        document.getElementById('maxLimitVal').innerText = `₹${data.user.maxLimit.toLocaleString()}`;
 
                         if (data.user.name) document.getElementById('clientName').value = data.user.name;
                         if (data.user.address) document.getElementById('clientAddress').value = data.user.address;
@@ -1042,10 +1042,9 @@ app.get('*', (req, res) => {
                 }
             }
 
-            // Fixed Robust UPI Deep Link with unescaped '@' and clean name encoding
-            function generateUpiDeepLink(upiId, amount, name = "Suraj Tripathi", note = "LeLe Loan Repayment") {
-                const cleanUpi = upiId.replace(/%40/g, '@');
-                return \`upi://pay?pa=\${cleanUpi}&pn=\${encodeURIComponent(name)}&am=\${amount}&cu=INR&tn=\${encodeURIComponent(note)}\`;
+            // Fixed Robust UPI Deep Link with Proper Personal Beneficiary Name ("Suraj Tripathi") & Parameters
+            function generateUpiDeepLink(upiId, amount, note = "LeLe Loan Repayment") {
+                return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent("Suraj Tripathi")}&am=${amount}&cu=INR&tn=${encodeURIComponent(note)}`;
             }
 
             function renderActiveLoanUI() {
@@ -1063,14 +1062,14 @@ app.get('*', (req, res) => {
 
                     const details = currentRepaymentDetails || { principal: currentActiveLoan.requestedAmount, lateInterest: 0, totalAmountDue: currentActiveLoan.requestedAmount };
 
-                    document.getElementById('loanAmount').innerText = \`₹\${details.principal}\`;
-                    document.getElementById('loanPenaltyInterest').innerText = \`₹\${details.lateInterest}\`;
-                    document.getElementById('loanTotalDue').innerText = \`₹\${details.totalAmountDue}\`;
+                    document.getElementById('loanAmount').innerText = `₹${details.principal}`;
+                    document.getElementById('loanPenaltyInterest').innerText = `₹${details.lateInterest}`;
+                    document.getElementById('loanTotalDue').innerText = `₹${details.totalAmountDue}`;
                     document.getElementById('loanReturnDate').innerText = new Date(currentActiveLoan.returnDate).toLocaleDateString();
                     document.getElementById('loanUpi').innerText = currentActiveLoan.upiId;
 
                     // Setup UPI App Redirection Deep Link
-                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, "Suraj Tripathi", \`Repay Loan \${currentActiveLoan._id}\`);
+                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, `Repay Loan ${currentActiveLoan._id}`);
                     document.getElementById('directUpiDeepLink').href = deepLink;
                     document.getElementById('modalUpiDeepLink').href = deepLink;
 
@@ -1107,7 +1106,7 @@ app.get('*', (req, res) => {
                     return;
                 }
                 const details = currentRepaymentDetails || { totalAmountDue: currentActiveLoan ? currentActiveLoan.requestedAmount : 0 };
-                document.getElementById('modalTotalAmount').innerText = \`₹\${details.totalAmountDue}\`;
+                document.getElementById('modalTotalAmount').innerText = `₹${details.totalAmountDue}`;
                 document.getElementById('displayRepayQr').src = currentQrCodeUrl;
                 document.getElementById('repaymentModal').classList.remove('hidden');
             }
@@ -1130,7 +1129,7 @@ app.get('*', (req, res) => {
                 try {
                     const res = await fetch('/api/loans/submit-repay', {
                         method: 'POST',
-                        headers: { 'Authorization': \`Bearer \${authToken}\` },
+                        headers: { 'Authorization': `Bearer ${authToken}` },
                         body: formData
                     });
                     const data = await res.json();
@@ -1172,7 +1171,7 @@ app.get('*', (req, res) => {
                 try {
                     const res = await fetch('/api/loans/apply', {
                         method: 'POST',
-                        headers: { 'Authorization': \`Bearer \${authToken}\` },
+                        headers: { 'Authorization': `Bearer ${authToken}` },
                         body: formData
                     });
                     const data = await res.json();
@@ -1273,57 +1272,57 @@ app.get('*', (req, res) => {
                         
                         const details = loan.repaymentDetails || { principal: loan.requestedAmount, lateInterest: 0, totalAmountDue: loan.requestedAmount };
 
-                        card.innerHTML = \`
+                        card.innerHTML = `
                             <div class="flex justify-between items-start">
                                 <div>
-                                    <h4 class="text-base font-bold text-white font-['Space_Grotesk']">\${loan.clientName} (\${loan.clientMobile})</h4>
-                                    <p class="text-xs text-gray-400 mt-0.5">Retail Store Address: \${loan.address}</p>
-                                    <p class="text-xs text-amber-400 font-semibold mt-0.5">Guarantor Mobile: \${loan.guarantorMobile}</p>
+                                    <h4 class="text-base font-bold text-white font-['Space_Grotesk']">${loan.clientName} (${loan.clientMobile})</h4>
+                                    <p class="text-xs text-gray-400 mt-0.5">Retail Store Address: ${loan.address}</p>
+                                    <p class="text-xs text-amber-400 font-semibold mt-0.5">Guarantor Mobile: ${loan.guarantorMobile}</p>
                                 </div>
-                                <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider \${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : loan.status === 'PAYMENT_VERIFICATION_PENDING' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">\${loan.status}</span>
+                                <span class="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${loan.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : loan.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : loan.status === 'PAYMENT_VERIFICATION_PENDING' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}">${loan.status}</span>
                             </div>
 
                             <div class="grid grid-cols-2 md:grid-cols-5 gap-4 bg-gray-950/80 p-4 rounded-xl text-xs border border-gray-800/80">
-                                <div><span class="text-gray-500">Principal:</span> <p class="text-white font-bold text-sm">₹\${details.principal}</p></div>
-                                <div><span class="text-gray-500">Late Penalty:</span> <p class="text-red-400 font-bold text-sm">₹\${details.lateInterest}</p></div>
-                                <div><span class="text-gray-500">Total Outstanding:</span> <p class="text-amber-400 font-bold text-sm">₹\${details.totalAmountDue}</p></div>
-                                <div><span class="text-gray-500">Return Date:</span> <p class="text-gray-300 font-bold text-sm">\${new Date(loan.returnDate).toLocaleDateString()}</p></div>
-                                <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-emerald-400 font-bold text-sm">\${loan.userId ? loan.userId.civilScore : 750}</p></div>
+                                <div><span class="text-gray-500">Principal:</span> <p class="text-white font-bold text-sm">₹${details.principal}</p></div>
+                                <div><span class="text-gray-500">Late Penalty:</span> <p class="text-red-400 font-bold text-sm">₹${details.lateInterest}</p></div>
+                                <div><span class="text-gray-500">Total Outstanding:</span> <p class="text-amber-400 font-bold text-sm">₹${details.totalAmountDue}</p></div>
+                                <div><span class="text-gray-500">Return Date:</span> <p class="text-gray-300 font-bold text-sm">${new Date(loan.returnDate).toLocaleDateString()}</p></div>
+                                <div><span class="text-gray-500">LeLe Civil Score:</span> <p class="text-emerald-400 font-bold text-sm">${loan.userId ? loan.userId.civilScore : 750}</p></div>
                             </div>
 
                             <div class="flex flex-wrap gap-4 items-center">
-                                <a href="\${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
+                                <a href="${loan.aadharPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
                                     <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View Aadhar PDF
                                 </a>
-                                <a href="\${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
+                                <a href="${loan.panPdfUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 transition flex items-center gap-1.5">
                                     <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400"></i> View PAN PDF
                                 </a>
-                                \${loan.paymentScreenshotUrl ? \`
-                                    <a href="\${loan.paymentScreenshotUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition flex items-center gap-1.5">
+                                ${loan.paymentScreenshotUrl ? `
+                                    <a href="${loan.paymentScreenshotUrl}" target="_blank" class="px-3 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition flex items-center gap-1.5">
                                         <i data-lucide="image" class="w-3.5 h-3.5 text-amber-400"></i> View Repayment Screenshot
                                     </a>
-                                \` : ''}
+                                ` : ''}
                             </div>
 
-                            \${loan.status === 'PENDING' ? \`
+                            ${loan.status === 'PENDING' ? `
                                 <div class="flex gap-3 pt-2">
-                                    <button onclick="openApprovalModal('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
+                                    <button onclick="openApprovalModal('${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
                                         Approve Facility
                                     </button>
-                                    <button onclick="rejectLoan('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
+                                    <button onclick="rejectLoan('${loan._id}')" class="px-5 py-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-xs uppercase tracking-wider hover:bg-red-500/20 transition">
                                         Reject Facility
                                     </button>
                                 </div>
-                            \` : ''}
+                            ` : ''}
 
-                            \${loan.status === 'PAYMENT_VERIFICATION_PENDING' ? \`
+                            ${loan.status === 'PAYMENT_VERIFICATION_PENDING' ? `
                                 <div class="flex gap-3 pt-2">
-                                    <button onclick="verifyPayment('\${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
+                                    <button onclick="verifyPayment('${loan._id}')" class="px-5 py-2.5 rounded-xl bg-emerald-500 text-black font-extrabold text-xs uppercase tracking-wider shadow-md shadow-emerald-500/20 hover:bg-emerald-400 transition">
                                         Verify & Close Repayment
                                     </button>
                                 </div>
-                            \` : ''}
-                        \`;
+                            ` : ''}
+                        `;
                         container.appendChild(card);
                     });
                     lucide.createIcons();
@@ -1438,7 +1437,7 @@ app.get('*', (req, res) => {
 
                 const opt = {
                     margin:       0.5,
-                    filename:     \`LeLe_Finance_Agreement_\${currentActiveLoan._id}.pdf\`,
+                    filename:     `LeLe_Finance_Agreement_${currentActiveLoan._id}.pdf`,
                     image:        { type: 'jpeg', quality: 0.98 },
                     html2canvas:  { scale: 2 },
                     jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
