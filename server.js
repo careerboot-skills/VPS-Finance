@@ -181,7 +181,7 @@ app.get('/api/client/profile', authenticateToken, async (req, res) => {
             activeLoan, 
             repaymentDetails,
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : 'paras5769@naviaxis'
+            financerUpiId: upiSetting ? upiSetting.value : '9005041462@upi'
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -280,7 +280,7 @@ app.post('/api/financer/verify', async (req, res) => {
             success: true, 
             message: 'Financer portal unlocked successfully.', 
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : 'paras5769@naviaxis'
+            financerUpiId: upiSetting ? upiSetting.value : '9005041462@upi'
         });
     } else {
         res.status(401).json({ error: 'Incorrect Passcode! Access Denied.' });
@@ -337,7 +337,7 @@ app.post('/api/financer/loans', async (req, res) => {
         res.json({ 
             loans: formattedLoans, 
             qrCodeUrl: qrSetting ? qrSetting.value : '',
-            financerUpiId: upiSetting ? upiSetting.value : 'paras5769@naviaxis'
+            financerUpiId: upiSetting ? upiSetting.value : '9005041462@upi'
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -641,7 +641,7 @@ app.get('*', (req, res) => {
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Full Client Legal Name</label>
-                                    <input type="text" id="clientName" required placeholder="Vaibhav Joshi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
+                                    <input type="text" id="clientName" required placeholder="Suraj Tripathi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                                 <div>
                                     <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Guarantor Mobile Number</label>
@@ -667,7 +667,7 @@ app.get('*', (req, res) => {
                                 </div>
                                 <div>
                                     <label class="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">UPI ID (For Funds Transfer)</label>
-                                    <input type="text" id="upiId" required placeholder="user@upi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
+                                    <input type="text" id="upiId" required placeholder="9005041462@upi" class="w-full bg-gray-950/80 border border-gray-800 rounded-xl p-3.5 text-white text-sm font-medium focus:border-amber-400 outline-none">
                                 </div>
                             </div>
 
@@ -812,7 +812,7 @@ app.get('*', (req, res) => {
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                         <div class="space-y-3">
                             <label class="block text-xs font-bold uppercase text-gray-400">Financer Merchant UPI ID</label>
-                            <input type="text" id="financerUpiInput" placeholder="paras5769@naviaxis" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-white text-sm outline-none focus:border-amber-400">
+                            <input type="text" id="financerUpiInput" placeholder="9005041462@upi" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-white text-sm outline-none focus:border-amber-400">
                         </div>
                         <div class="space-y-3">
                             <label class="block text-xs font-bold uppercase text-gray-400">Upload New Repayment QR Image</label>
@@ -888,7 +888,7 @@ app.get('*', (req, res) => {
             let currentActiveLoan = null;
             let currentRepaymentDetails = null;
             let currentQrCodeUrl = '';
-            let currentFinancerUpi = 'paras5769@naviaxis';
+            let currentFinancerUpi = '9005041462@upi';
             let financerCode = '';
             let pendingApprovalLoanId = null;
 
@@ -1031,7 +1031,7 @@ app.get('*', (req, res) => {
                         currentActiveLoan = data.activeLoan;
                         currentRepaymentDetails = data.repaymentDetails;
                         currentQrCodeUrl = data.qrCodeUrl;
-                        currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
+                        currentFinancerUpi = data.financerUpiId || '9005041462@upi';
 
                         renderActiveLoanUI();
                     } else {
@@ -1042,9 +1042,10 @@ app.get('*', (req, res) => {
                 }
             }
 
-            // Fixed Robust UPI Deep Link with Proper Merchant Name & Parameters
-            function generateUpiDeepLink(upiId, amount, note = "LeLe Loan Repayment") {
-                return \`upi://pay?pa=\${encodeURIComponent(upiId)}&pn=\${encodeURIComponent("LeLe Finance")}&am=\${amount}&cu=INR&tn=\${encodeURIComponent(note)}\`;
+            // Fixed Robust UPI Deep Link with unescaped '@' and clean name encoding
+            function generateUpiDeepLink(upiId, amount, name = "Suraj Tripathi", note = "LeLe Loan Repayment") {
+                const cleanUpi = upiId.replace(/%40/g, '@');
+                return \`upi://pay?pa=\${cleanUpi}&pn=\${encodeURIComponent(name)}&am=\${amount}&cu=INR&tn=\${encodeURIComponent(note)}\`;
             }
 
             function renderActiveLoanUI() {
@@ -1069,7 +1070,7 @@ app.get('*', (req, res) => {
                     document.getElementById('loanUpi').innerText = currentActiveLoan.upiId;
 
                     // Setup UPI App Redirection Deep Link
-                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, \`Repay Loan \${currentActiveLoan._id}\`);
+                    const deepLink = generateUpiDeepLink(currentFinancerUpi, details.totalAmountDue, "Suraj Tripathi", \`Repay Loan \${currentActiveLoan._id}\`);
                     document.getElementById('directUpiDeepLink').href = deepLink;
                     document.getElementById('modalUpiDeepLink').href = deepLink;
 
@@ -1205,7 +1206,7 @@ app.get('*', (req, res) => {
                     if (res.ok) {
                         financerCode = code;
                         currentQrCodeUrl = data.qrCodeUrl || '';
-                        currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
+                        currentFinancerUpi = data.financerUpiId || '9005041462@upi';
                         document.getElementById('financerUpiInput').value = currentFinancerUpi;
                         closeFinancerModal();
                         document.getElementById('financerPortalModal').classList.remove('hidden');
@@ -1224,7 +1225,7 @@ app.get('*', (req, res) => {
 
             async function uploadNewPaymentConfig() {
                 const fileInput = document.getElementById('newQrFile');
-                const upiInput = document.getElementById('financerUpiInput').value || 'paras5769@naviaxis';
+                const upiInput = document.getElementById('financerUpiInput').value || '9005041462@upi';
 
                 const formData = new FormData();
                 if (fileInput.files[0]) {
@@ -1260,7 +1261,7 @@ app.get('*', (req, res) => {
                     const data = await res.json();
                     const loans = data.loans;
                     currentQrCodeUrl = data.qrCodeUrl || '';
-                    currentFinancerUpi = data.financerUpiId || 'paras5769@naviaxis';
+                    currentFinancerUpi = data.financerUpiId || '9005041462@upi';
                     document.getElementById('financerUpiInput').value = currentFinancerUpi;
 
                     const container = document.getElementById('financerLoanList');
